@@ -228,7 +228,17 @@ func (p *Provider) GetWildcard() cache.Cache {
 	return p.cache
 }
 
-// IndexField indexes the given object by the given field on all engaged clusters, current and future.
+// IndexField indexes the given field for the given object.
 func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	return p.cache.IndexField(ctx, obj, field, extractValue)
+	return p.cache.IndexField(ctx, obj, "cluster/"+field, func(obj client.Object) []string {
+		keys := extractValue(obj)
+
+		clusterName := logicalcluster.From(obj)
+
+		ret := make([]string, 0, len(keys))
+		for _, key := range keys {
+			ret = append(ret, fmt.Sprintf("%s|%s", clusterName, key))
+		}
+		return ret
+	})
 }

@@ -26,7 +26,6 @@ import (
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
 	"github.com/kcp-dev/logicalcluster/v3"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/fields"
@@ -289,7 +288,7 @@ func keyToNamespacedKey(ns string, baseKey string) string {
 // keyToClusteredKey prefixes the given index key with a cluster name
 // for use in field selector indexes.
 func keyToClusteredKey(clusterName string, ns string, baseKey string) string {
-	return clusterName + "|" + keyToNamespacedKey(ns, baseKey)
+	return keyToNamespacedKey(ns, clusterName+"|"+baseKey)
 }
 
 // requiresExactMatch checks if the given field selector is of the form `k=v` or `k==v`.
