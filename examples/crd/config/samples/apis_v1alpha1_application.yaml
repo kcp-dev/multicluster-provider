@@ -1,0 +1,9 @@
+apiVersion: apis.contrib.kcp.io/v1alpha1
+kind: Application
+metadata:
+  labels:
+    app.kubernetes.io/name: crd
+    app.kubernetes.io/managed-by: kustomize
+  name: application-sample
+spec:
+  # TODO(user): Add fields here

@@ -12,7 +12,8 @@ Currently available are:
 
 ## Examples
 
-See [examples/apiexport](./examples/apiexport) for sample code.
+See [examples/configmap](./examples/configmap) for sample ConfigMap code.
+See [examples/crd](./examples/crd) for sample controller-runtime genereated CRD code.
 
 ## Contributing
 

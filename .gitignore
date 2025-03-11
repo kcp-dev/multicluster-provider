@@ -7,3 +7,4 @@
 *.kubeconfig
 *.pem
 *.key
+examples/crd/hack/tools/apigen
