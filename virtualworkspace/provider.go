@@ -109,7 +109,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	if err != nil {
 		return fmt.Errorf("failed to get logical cluster informer: %w", err)
 	}
-	shInf, _, _, _, err := p.cache.getSharedInformer(p.object)
+	shInf, _, _, err := p.cache.getSharedInformer(p.object)
 	if err != nil {
 		return fmt.Errorf("failed to get shared informer: %w", err)
 	}
