@@ -109,7 +109,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	if err != nil {
 		return fmt.Errorf("failed to get logical cluster informer: %w", err)
 	}
-	shInf, _, _, _, err := p.cache.getSharedInformer(p.object)
+	shInf, _, _, err := p.cache.getSharedInformer(p.object)
 	if err != nil {
 		return fmt.Errorf("failed to get shared informer: %w", err)
 	}
@@ -226,4 +226,9 @@ func (p *Provider) Get(_ context.Context, name string) (cluster.Cluster, error) 
 // GetWildcard returns the wildcard cache.
 func (p *Provider) GetWildcard() cache.Cache {
 	return p.cache
+}
+
+// IndexField indexes the given object by the given field on all engaged clusters, current and future.
+func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return p.cache.IndexField(ctx, obj, field, extractValue)
 }

@@ -121,7 +121,7 @@ func main() {
 					return reconcile.Result{}, fmt.Errorf("failed to get configmap: %w", err)
 				}
 
-				log.Info("Reconciling configmap", "name", s.Name, "uuid", s.UID)
+				log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
 
 				return reconcile.Result{}, nil
 			},

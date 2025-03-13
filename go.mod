@@ -7,7 +7,7 @@ require (
 	github.com/kcp-dev/apimachinery/v2 v2.0.1-0.20240817110845-a9eb9752bfeb
 	github.com/kcp-dev/kcp/sdk v0.26.1
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5
-	github.com/multicluster-runtime/multicluster-runtime v0.20.0-alpha.3
+	github.com/multicluster-runtime/multicluster-runtime v0.20.0-alpha.5
 	github.com/spf13/pflag v1.0.6-0.20210604193023-d5e0c0615ace
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.10.0
