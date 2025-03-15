@@ -19,9 +19,9 @@ package virtualworkspace
 import (
 	"fmt"
 
-	"github.com/kcp-dev/logicalcluster/v3"
-
 	"k8s.io/apimachinery/pkg/api/meta"
+
+	"github.com/kcp-dev/logicalcluster/v3"
 )
 
 // ClusterIndexFunc indexes by cluster name.
