@@ -289,7 +289,7 @@ func keyToNamespacedKey(ns string, baseKey string) string {
 // keyToClusteredKey prefixes the given index key with a cluster name
 // for use in field selector indexes.
 func keyToClusteredKey(clusterName string, ns string, baseKey string) string {
-	return clusterName + "|" + keyToNamespacedKey(ns, baseKey)
+	return keyToNamespacedKey(ns, clusterName+"|"+baseKey)
 }
 
 // requiresExactMatch checks if the given field selector is of the form `k=v` or `k==v`.
