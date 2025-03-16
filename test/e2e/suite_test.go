@@ -37,7 +37,7 @@ var (
 	kcpConfig *rest.Config
 )
 
-func TestGinkgo(t *testing.T) {
+func TestE2e(t *testing.T) {
 	RegisterFailHandler(Fail)
 
 	// Start a shared kcp instance.

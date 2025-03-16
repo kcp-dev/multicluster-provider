@@ -35,6 +35,7 @@ var _ = Describe("Control Plane", func() {
 		Expect(plane.Start()).To(Succeed())
 		Expect(plane.Stop()).To(Succeed())
 	})
+
 	It("should use the given shard when starting, if present", func() {
 		rootShard := &Shard{}
 		plane := &Kcp{

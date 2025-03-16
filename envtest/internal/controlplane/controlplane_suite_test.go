@@ -24,6 +24,9 @@ import (
 )
 
 func TestIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
 	t.Parallel()
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Kcp Standup Unit Tests")
