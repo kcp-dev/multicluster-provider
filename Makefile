@@ -37,16 +37,6 @@ $(GOLANGCI_LINT):
 	  golangci-lint \
 	  ${GOLANGCI_LINT_VERSION}
 
-GIMPS = _tools/gimps
-GIMPS_VERSION = 0.6.0
-
-.PHONY: $(GIMPS)
-$(GIMPS):
-	@hack/download-tool.sh \
-	  https://github.com/xrstf/gimps/releases/download/v${GIMPS_VERSION}/gimps_${GIMPS_VERSION}_${GOOS}_${GOARCH}.tar.gz \
-	  gimps \
-	  ${GIMPS_VERSION}
-
 WWHRD = _tools/wwhrd
 WWHRD_VERSION = 0.4.0
 
@@ -100,8 +90,15 @@ lint: $(GOLANGCI_LINT)
 		./...
 
 .PHONY: imports
-imports: $(GIMPS)
-	$(GIMPS) .
+imports: WHAT ?=
+imports: $(GOLANGCI_LINT)
+	@if [ -n "$(WHAT)" ]; then \
+	  $(GOLANGCI_LINT) run --enable-only=gci --fix --fast $(WHAT); \
+	else \
+	  for MOD in . $$(git ls-files '**/go.mod' | sed 's,/go.mod,,'); do \
+		(cd $$MOD; $(GOLANGCI_LINT) run --enable-only=gci --fix --fast); \
+	  done; \
+	fi
 
 .PHONY: verify
 verify:

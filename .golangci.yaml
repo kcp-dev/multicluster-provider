@@ -25,6 +25,7 @@ linters:
     - errchkjson
     - errorlint
     - exhaustive
+    - gci
     - ginkgolinter
     - goconst
     - gocritic
@@ -53,6 +54,18 @@ linters:
     - whitespace
 
 linters-settings:
+  gci:
+    custom-order: true
+    sections:
+    - standard
+    - default
+    - prefix(k8s.io,sigs.k8s.io)
+    - prefix(github.com/kcp-dev)
+    - prefix(github.com/multicluster-runtime)
+    - prefix(github.com/kcp-dev/multicluster-provider)
+    - blank
+    - dot
+    skip-generated: true
   govet:
     enable-all: true
     disable:

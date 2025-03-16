@@ -23,12 +23,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
-	"github.com/kcp-dev/logicalcluster/v3"
 	"golang.org/x/sync/errgroup"
-
-	mcmanager "github.com/multicluster-runtime/multicluster-runtime/pkg/manager"
-	"github.com/multicluster-runtime/multicluster-runtime/pkg/multicluster"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -39,6 +34,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
+	"github.com/kcp-dev/logicalcluster/v3"
+
+	mcmanager "github.com/multicluster-runtime/multicluster-runtime/pkg/manager"
+	"github.com/multicluster-runtime/multicluster-runtime/pkg/multicluster"
 )
 
 var _ multicluster.Provider = &Provider{}
