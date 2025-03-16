@@ -43,7 +43,7 @@ import (
 // WildcardCache is a cache that operates on a /clusters/* endpoint.
 type WildcardCache interface {
 	cache.Cache
-	getSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, bool, error)
+	getSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error)
 }
 
 // NewWildcardCache returns a cache.Cache that handles multi-cluster watches
@@ -80,6 +80,8 @@ func NewWildcardCache(config *rest.Config, opts cache.Options) (WildcardCache, e
 			Unstructured: make(map[schema.GroupVersionKind]k8scache.SharedIndexInformer),
 			Metadata:     make(map[schema.GroupVersionKind]k8scache.SharedIndexInformer),
 		},
+
+		readerFailOnMissingInformer: opts.ReaderFailOnMissingInformer,
 	}
 
 	opts.NewInformer = func(watcher k8scache.ListerWatcher, obj runtime.Object, duration time.Duration, indexers k8scache.Indexers) k8scache.SharedIndexInformer {
@@ -121,17 +123,22 @@ type wildcardCache struct {
 	scheme  *runtime.Scheme
 	mapper  apimeta.RESTMapper
 	tracker informerTracker
+
+	readerFailOnMissingInformer bool
 }
 
-func (c *wildcardCache) getSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, bool, error) {
+func (c *wildcardCache) getSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error) {
 	gvk, err := apiutil.GVKForObject(obj, c.scheme)
 	if err != nil {
-		return nil, gvk, "", false, err
+		return nil, gvk, "", fmt.Errorf("failed to get GVK for object: %w", err)
 	}
+
+	// We need the non-list GVK, so chop off the "List" from the end of the kind.
+	gvk.Kind = strings.TrimSuffix(gvk.Kind, "List")
 
 	mapping, err := c.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
-		return nil, gvk, "", false, err
+		return nil, gvk, "", fmt.Errorf("failed to get REST mapping: %w", err)
 	}
 
 	infs := c.tracker.informersByType(obj)
@@ -139,7 +146,37 @@ func (c *wildcardCache) getSharedInformer(obj runtime.Object) (k8scache.SharedIn
 	inf, ok := infs[gvk]
 	c.tracker.lock.RUnlock()
 
-	return inf, gvk, mapping.Scope.Name(), ok, nil
+	// we need to create a new informer here.
+	if !ok {
+		// we have been instructed to fail if the informer is missing.
+		if c.readerFailOnMissingInformer {
+			return nil, gvk, "", &cache.ErrResourceNotCached{}
+		}
+
+		// Let's generate a new object from the chopped GVK, since the original obj might be of *List type.
+		o, err := c.scheme.New(gvk)
+		if err != nil {
+			return nil, gvk, "", fmt.Errorf("failed to create object for GVK: %w", err)
+		}
+
+		// Call GetInformer, but we don't care about the output. We just need to make sure that our NewInformer
+		// func has been called, which registers the new informer in our tracker.
+		if _, err := c.Cache.GetInformer(context.TODO(), o.(client.Object)); err != nil {
+			return nil, gvk, "", fmt.Errorf("failed to create informer: %w", err)
+		}
+
+		// Now we should be able to find the informer.
+		infs := c.tracker.informersByType(obj)
+		c.tracker.lock.RLock()
+		inf, ok = infs[gvk]
+		c.tracker.lock.RUnlock()
+
+		if !ok {
+			return nil, gvk, "", fmt.Errorf("failed to find newly started informer for %v", gvk)
+		}
+	}
+
+	return inf, gvk, mapping.Scope.Name(), nil
 }
 
 // IndexField adds an index for the given object kind.
