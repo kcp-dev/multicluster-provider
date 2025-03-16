@@ -73,7 +73,7 @@ func (c *clusterClient) Cluster(cluster logicalcluster.Path) (client.Client, err
 
 	// cache miss
 	cfg := rest.CopyConfig(c.baseConfig)
-	cfg.Host = cfg.Host + cluster.RequestPath()
+	cfg.Host += cluster.RequestPath()
 	cli, err := client.New(cfg, c.opts)
 	if err != nil {
 		return nil, err

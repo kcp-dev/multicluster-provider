@@ -106,5 +106,5 @@ verify:
 	./hack/verify-licenses.sh
 
 .PHONY: test
-test:
+test: $(KCP)
 	./hack/run-tests.sh
