@@ -17,6 +17,7 @@ limitations under the License.
 package client
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/hashicorp/golang-lru/v2"
@@ -30,7 +31,7 @@ import (
 // ClusterClient is a cluster-aware client.
 type ClusterClient interface {
 	// Cluster returns the client for the given cluster.
-	Cluster(cluster logicalcluster.Path) (client.Client, error)
+	Cluster(cluster logicalcluster.Path) client.Client
 }
 
 // clusterClient is a multi-cluster-aware client.
@@ -55,20 +56,20 @@ func New(cfg *rest.Config, options client.Options) (ClusterClient, error) {
 	}, nil
 }
 
-func (c *clusterClient) Cluster(cluster logicalcluster.Path) (client.Client, error) {
+func (c *clusterClient) Cluster(cluster logicalcluster.Path) client.Client {
 	// quick path
 	c.lock.RLock()
 	cli, ok := c.cache.Get(cluster)
 	c.lock.RUnlock()
 	if ok {
-		return cli, nil
+		return cli
 	}
 
 	// slow path
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if cli, ok := c.cache.Get(cluster); ok {
-		return cli, nil
+		return cli
 	}
 
 	// cache miss
@@ -76,8 +77,8 @@ func (c *clusterClient) Cluster(cluster logicalcluster.Path) (client.Client, err
 	cfg.Host += cluster.RequestPath()
 	cli, err := client.New(cfg, c.opts)
 	if err != nil {
-		return nil, err
+		panic(fmt.Errorf("failed to create client for cluster %s: %w", cluster, err))
 	}
 	c.cache.Add(cluster, cli)
-	return cli, nil
+	return cli
 }

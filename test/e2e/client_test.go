@@ -25,6 +25,7 @@ import (
 	"github.com/kcp-dev/kcp/sdk/apis/core"
 
 	clusterclient "github.com/kcp-dev/multicluster-provider/client"
+	"github.com/kcp-dev/multicluster-provider/envtest"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -35,11 +36,19 @@ var _ = Describe("Cluster Client", Ordered, func() {
 		cli, err := clusterclient.New(kcpConfig, client.Options{})
 		Expect(err).NotTo(HaveOccurred())
 
-		rootCli, err := cli.Cluster(core.RootCluster.Path())
+		ns := &corev1.Namespace{}
+		err = cli.Cluster(core.RootCluster.Path()).Get(ctx, client.ObjectKey{Name: "default"}, ns)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("can create a workspace and access it", func(ctx context.Context) {
+		cli, err := clusterclient.New(kcpConfig, client.Options{})
 		Expect(err).NotTo(HaveOccurred())
 
+		_, ws := envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path())
+
 		ns := &corev1.Namespace{}
-		err = rootCli.Get(ctx, client.ObjectKey{Name: "default"}, ns)
+		err = cli.Cluster(ws).Get(ctx, client.ObjectKey{Name: "default"}, ns)
 		Expect(err).NotTo(HaveOccurred())
 	})
 })

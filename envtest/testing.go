@@ -14,6 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package envtest provides a test environment for testing code against a
-// kcp control plane.
 package envtest
+
+// TestingT is implemented by *testing.T and potentially other test frameworks.
+type TestingT interface {
+	Cleanup(func())
+	Error(args ...any)
+	Errorf(format string, args ...any)
+	FailNow()
+	Failed() bool
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
+	Helper()
+	Log(args ...any)
+	Logf(format string, args ...any)
+	Name() string
+	TempDir() string
+}
