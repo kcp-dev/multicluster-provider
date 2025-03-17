@@ -22,13 +22,7 @@ import (
 
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/rest"
-
-	"github.com/kcp-dev/multicluster-provider/envtest/internal/certs"
 )
-
-// NewTinyCA creates a new a tiny CA utility for provisioning serving certs and client certs FOR TESTING ONLY.
-// Don't use this for anything else!
-var NewTinyCA = certs.NewTinyCA
 
 // Kcp is a struct that knows how to start your test kcp.
 //

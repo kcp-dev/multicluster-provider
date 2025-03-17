@@ -21,10 +21,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
+	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+	topologyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/topology/v1alpha1"
 
 	"github.com/kcp-dev/multicluster-provider/envtest"
 
@@ -36,6 +43,13 @@ var (
 	env       *envtest.Environment
 	kcpConfig *rest.Config
 )
+
+func init() {
+	runtime.Must(apisv1alpha1.AddToScheme(scheme.Scheme))
+	runtime.Must(corev1alpha1.AddToScheme(scheme.Scheme))
+	runtime.Must(tenancyv1alpha1.AddToScheme(scheme.Scheme))
+	runtime.Must(topologyv1alpha1.AddToScheme(scheme.Scheme))
+}
 
 func TestE2e(t *testing.T) {
 	RegisterFailHandler(Fail)
