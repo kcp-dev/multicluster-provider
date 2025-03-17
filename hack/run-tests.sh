@@ -19,5 +19,6 @@ set -euo pipefail
 cd $(dirname $0)/..
 source hack/lib.sh
 
-CGO_ENABLED=1 go_test unit_tests \
-  -tags "unit" -timeout 20m -race -v ./...
+TEST_KCP_ASSETS="${PWD}/_tools" \
+CGO_ENABLED=1 \
+  go_test unit_tests -short -tags "unit" -timeout 20m -race -v ./...
