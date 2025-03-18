@@ -108,7 +108,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	// Watch logical clusters and engage them as clusters in multicluster-runtime.
 	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(false))
 	if err != nil {
-		return fmt.Errorf("failed to get logical cluster informer: %w", err)
+		return fmt.Errorf("failed to get %T informer: %w", p.object, err)
 	}
 	shInf, _, _, err := p.cache.getSharedInformer(p.object)
 	if err != nil {
@@ -206,8 +206,9 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 
 	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if !p.cache.WaitForCacheSync(syncCtx) {
-		return fmt.Errorf("failed to sync wildcard cache")
+
+	if _, err := p.cache.GetInformer(syncCtx, p.object, cache.BlockUntilSynced(true)); err != nil {
+		return fmt.Errorf("failed to sync %T informer: %w", p.object, err)
 	}
 
 	return g.Wait()

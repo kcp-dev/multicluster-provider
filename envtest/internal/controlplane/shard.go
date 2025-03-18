@@ -262,6 +262,7 @@ func (s *Shard) defaultArgs() map[string][]string {
 		"bind-address":              {s.SecureServing.Address},
 		"embedded-etcd-peer-port":   {s.EmbeddedEtcd.PeerPort},
 		"embedded-etcd-client-port": {s.EmbeddedEtcd.ClientPort},
+		"external-hostname":         {s.SecureServing.Address},
 	}
 	return args
 }
