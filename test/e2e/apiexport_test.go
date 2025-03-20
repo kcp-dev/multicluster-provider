@@ -27,7 +27,9 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
@@ -94,6 +96,7 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 						Raw: []byte(`{"type":"object","properties":{"spec":{"type":"object","properties":{"message":{"type":"string"}}}}}`),
 					},
 					Storage: true,
+					Served:  true,
 				}},
 			},
 		}
@@ -149,11 +152,35 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 		envtest.Eventually(GinkgoT(), func() (bool, string) {
 			err := cli.Cluster(provider).Get(ctx, client.ObjectKey{Name: "example.com"}, endpoints)
 			if err != nil {
-				return false, fmt.Sprintf("failed to get APIExportEndpointSlice in %s: %v", provider, err)
+				return false, fmt.Sprintf("failed to get APIExportEndpointSlice in %q: %v", provider, err)
 			}
 			return len(endpoints.Status.APIExportEndpoints) > 0, toYAML(GinkgoT(), endpoints)
-		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see endpoints in APIExportEndpointSlice in %s", provider)
+		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see endpoints in APIExportEndpointSlice in %q", provider)
 		vwEndpoint = endpoints.Status.APIExportEndpoints[0].URL
+
+		By(fmt.Sprintf("waiting until the APIBinding in the consumer workspace %q to be ready", consumer))
+		envtest.Eventually(GinkgoT(), func() (bool, string) {
+			current := &apisv1alpha1.APIBinding{}
+			err := cli.Cluster(consumer).Get(ctx, client.ObjectKey{Name: "example.com"}, current)
+			if err != nil {
+				return false, fmt.Sprintf("failed to get APIBinding in %q: %v", consumer, err)
+			}
+			if current.Status.Phase != apisv1alpha1.APIBindingPhaseBound {
+				return false, fmt.Sprintf("binding not bound:\n\n%s", toYAML(GinkgoT(), current))
+			}
+			return true, ""
+		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to wait for APIBinding in consumer workspace to be ready %q", consumer)
+
+		By("waiting until things can be listed in the consumer workspace")
+		envtest.Eventually(GinkgoT(), func() (bool, string) {
+			u := &unstructured.UnstructuredList{}
+			u.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+			err = cli.Cluster(consumer).List(ctx, u)
+			if err != nil {
+				return false, fmt.Sprintf("failed to list things in %s: %v", consumer, err)
+			}
+			return true, ""
+		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to wait for things to be listable in consumer workspace %q", consumer)
 	})
 
 	Describe("with a multicluster provider and manager", func() {
