@@ -212,7 +212,7 @@ func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName 
 	indexers := indexer.GetIndexers()
 	_, isClusterAware := indexers[kcpcache.ClusterAndNamespaceIndexName]
 	for idx, req := range requires {
-		indexName := fieldIndexName(req.Field)
+		indexName := fieldIndexName(isClusterAware, req.Field)
 		var indexedValue string
 		if isClusterAware {
 			indexedValue = keyToClusteredKey(clusterName.String(), namespace, req.Value)
@@ -270,7 +270,10 @@ func objectKeyToStoreKey(k client.ObjectKey) string {
 
 // fieldIndexName constructs the name of the index over the given field,
 // for use with an indexer.
-func fieldIndexName(field string) string {
+func fieldIndexName(clusterAware bool, field string) string {
+	if clusterAware {
+		return "field:cluster/" + field
+	}
 	return "field:" + field
 }
 
@@ -289,7 +292,10 @@ func keyToNamespacedKey(ns string, baseKey string) string {
 // keyToClusteredKey prefixes the given index key with a cluster name
 // for use in field selector indexes.
 func keyToClusteredKey(clusterName string, ns string, baseKey string) string {
-	return clusterName + "|" + keyToNamespacedKey(ns, baseKey)
+	if ns != "" {
+		return ns + "/" + clusterName + "/" + baseKey
+	}
+	return allNamespacesNamespace + "/" + clusterName + "/" + baseKey
 }
 
 // requiresExactMatch checks if the given field selector is of the form `k=v` or `k==v`.
