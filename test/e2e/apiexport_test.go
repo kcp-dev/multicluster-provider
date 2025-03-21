@@ -27,9 +27,12 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -57,11 +60,11 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 		ctx    context.Context
 		cancel context.CancelFunc
 
-		cli                clusterclient.ClusterClient
-		provider, consumer logicalcluster.Path
-		consumerWS         *tenancyv1alpha1.Workspace
-		mgr                mcmanager.Manager
-		vwEndpoint         string
+		cli                       clusterclient.ClusterClient
+		provider, consumer, other logicalcluster.Path
+		consumerWS                *tenancyv1alpha1.Workspace
+		mgr                       mcmanager.Manager
+		vwEndpoint                string
 	)
 
 	BeforeAll(func() {
@@ -73,6 +76,7 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 
 		_, provider = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("provider"))
 		consumerWS, consumer = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("consumer"))
+		_, other = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("other"))
 
 		By(fmt.Sprintf("creating a schema in the provider workspace %q", provider))
 		schema := &apisv1alpha1.APIResourceSchema{
@@ -94,6 +98,7 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 						Raw: []byte(`{"type":"object","properties":{"spec":{"type":"object","properties":{"message":{"type":"string"}}}}}`),
 					},
 					Storage: true,
+					Served:  true,
 				}},
 			},
 		}
@@ -127,8 +132,25 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 		err = cli.Cluster(provider).Create(ctx, endpoitns)
 		Expect(err).NotTo(HaveOccurred())
 
-		By(fmt.Sprintf("creating an APIBinding in the consumer workspace %q", consumer))
+		By(fmt.Sprintf("creating an APIBinding in the other workspace %q", other))
 		binding := &apisv1alpha1.APIBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "example.com",
+			},
+			Spec: apisv1alpha1.APIBindingSpec{
+				Reference: apisv1alpha1.BindingReference{
+					Export: &apisv1alpha1.ExportBindingReference{
+						Path: provider.String(),
+						Name: export.Name,
+					},
+				},
+			},
+		}
+		err = cli.Cluster(other).Create(ctx, binding)
+		Expect(err).NotTo(HaveOccurred())
+
+		By(fmt.Sprintf("creating an APIBinding in the consumer workspace %q", consumer))
+		binding = &apisv1alpha1.APIBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "example.com",
 			},
@@ -149,27 +171,87 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 		envtest.Eventually(GinkgoT(), func() (bool, string) {
 			err := cli.Cluster(provider).Get(ctx, client.ObjectKey{Name: "example.com"}, endpoints)
 			if err != nil {
-				return false, fmt.Sprintf("failed to get APIExportEndpointSlice in %s: %v", provider, err)
+				return false, fmt.Sprintf("failed to get APIExportEndpointSlice in %q: %v", provider, err)
 			}
 			return len(endpoints.Status.APIExportEndpoints) > 0, toYAML(GinkgoT(), endpoints)
-		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see endpoints in APIExportEndpointSlice in %s", provider)
+		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see endpoints in APIExportEndpointSlice in %q", provider)
 		vwEndpoint = endpoints.Status.APIExportEndpoints[0].URL
+
+		By(fmt.Sprintf("waiting until the APIBinding in the consumer workspace %q to be ready", consumer))
+		envtest.Eventually(GinkgoT(), func() (bool, string) {
+			current := &apisv1alpha1.APIBinding{}
+			err := cli.Cluster(consumer).Get(ctx, client.ObjectKey{Name: "example.com"}, current)
+			if err != nil {
+				return false, fmt.Sprintf("failed to get APIBinding in %q: %v", consumer, err)
+			}
+			if current.Status.Phase != apisv1alpha1.APIBindingPhaseBound {
+				return false, fmt.Sprintf("binding not bound:\n\n%s", toYAML(GinkgoT(), current))
+			}
+			return true, ""
+		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to wait for APIBinding in consumer workspace to be ready %q", consumer)
+
+		By("waiting until things can be listed in the consumer workspace")
+		envtest.Eventually(GinkgoT(), func() (bool, string) {
+			u := &unstructured.UnstructuredList{}
+			u.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+			err = cli.Cluster(consumer).List(ctx, u)
+			if err != nil {
+				return false, fmt.Sprintf("failed to list things in %s: %v", consumer, err)
+			}
+			return true, ""
+		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to wait for things to be listable in consumer workspace %q", consumer)
 	})
 
 	Describe("with a multicluster provider and manager", func() {
 		var (
 			lock        sync.RWMutex
 			engaged     = sets.NewString()
+			p           *virtualworkspace.Provider
 			g           *errgroup.Group
 			cancelGroup context.CancelFunc
 		)
 
 		BeforeAll(func() {
+			By("creating a stone in the consumer workspace", func() {
+				thing := &unstructured.Unstructured{}
+				thing.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Thing"})
+				thing.SetName("stone")
+				thing.SetLabels(map[string]string{"color": "gray"})
+				err := cli.Cluster(consumer).Create(ctx, thing)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			By("creating a box in the other workspace", func() {
+				thing := &unstructured.Unstructured{}
+				thing.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Thing"})
+				thing.SetName("box")
+				thing.SetLabels(map[string]string{"color": "white"})
+				err := cli.Cluster(other).Create(ctx, thing)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
 			By("creating a multicluster provider for APIBindings against the apiexport virtual workspace")
 			vwConfig := rest.CopyConfig(kcpConfig)
 			vwConfig.Host = vwEndpoint
-			p, err := virtualworkspace.New(vwConfig, &apisv1alpha1.APIBinding{}, virtualworkspace.Options{})
+			var err error
+			p, err = virtualworkspace.New(vwConfig, &apisv1alpha1.APIBinding{}, virtualworkspace.Options{})
 			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for discovery of the virtual workspace to show 'example.com'")
+			wildcardConfig := rest.CopyConfig(vwConfig)
+			wildcardConfig.Host += logicalcluster.Wildcard.RequestPath()
+			disc, err := discovery.NewDiscoveryClientForConfig(wildcardConfig)
+			Expect(err).NotTo(HaveOccurred())
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				ret, err := disc.ServerGroups()
+				Expect(err).NotTo(HaveOccurred())
+				for _, g := range ret.Groups {
+					if g.Name == "example.com" {
+						return true, ""
+					}
+				}
+				return false, fmt.Sprintf("failed to find group example.com in:\n%s", toYAML(GinkgoT(), ret))
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to find group example.com in the virtual workspace")
 
 			By("creating a manager against the provider workspace")
 			rootConfig := rest.CopyConfig(kcpConfig)
@@ -177,7 +259,16 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 			mgr, err = mcmanager.New(rootConfig, p, mcmanager.Options{})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("creating a reconciler for the APIBinding")
+			By("adding an index on label 'color'")
+			thing := &unstructured.Unstructured{}
+			thing.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Thing"})
+			err = mgr.GetFieldIndexer().IndexField(ctx, thing, "color", func(obj client.Object) []string {
+				u := obj.(*unstructured.Unstructured)
+				return []string{u.GetLabels()["color"]}
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating a reconciler for APIBindings")
 			err = mcbuilder.ControllerManagedBy(mgr).
 				Named("things").
 				For(&apisv1alpha1.APIBinding{}).
@@ -209,6 +300,46 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 				defer lock.RUnlock()
 				return engaged.Has(consumerWS.Spec.Cluster), fmt.Sprintf("failed to see the consumer workspace %q as a cluster: %v", consumerWS.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see the consumer workspace %q as a cluster", consumer)
+		})
+
+		It("sees only the stone in the consumer clusters", func() {
+			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
+				l := &unstructured.UnstructuredList{}
+				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+				err = consumerCl.GetCache().List(ctx, l)
+				if err != nil {
+					return false, fmt.Sprintf("failed to list things in the consumer cluster cache: %v", err)
+				}
+				if len(l.Items) != 1 {
+					return false, fmt.Sprintf("expected 1 item, got %d\n\n%s", len(l.Items), toYAML(GinkgoT(), l.Object))
+				} else if name := l.Items[0].GetName(); name != "stone" {
+					return false, fmt.Sprintf("expected item name to be stone, got %q\n\n%s", name, toYAML(GinkgoT(), l.Items[0]))
+				}
+				return true, ""
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see the stone in the consumer cluster")
+		})
+
+		It("sees only the stone as grey thing in the consumer clusters", func() {
+			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
+			Expect(err).NotTo(HaveOccurred())
+
+			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
+				l := &unstructured.UnstructuredList{}
+				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+				err = consumerCl.GetCache().List(ctx, l, client.MatchingFields{"color": "gray"})
+				if err != nil {
+					return false, fmt.Sprintf("failed to list things in the consumer cluster cache: %v", err)
+				}
+				if len(l.Items) != 1 {
+					return false, fmt.Sprintf("expected 1 item, got %d\n\n%s", len(l.Items), toYAML(GinkgoT(), l.Object))
+				} else if name := l.Items[0].GetName(); name != "stone" {
+					return false, fmt.Sprintf("expected item name to be stone, got %q\n\n%s", name, toYAML(GinkgoT(), l.Items[0]))
+				}
+				return true, ""
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see the stone as only thing of color 'grey' in the consumer cluster")
 		})
 
 		AfterAll(func() {
