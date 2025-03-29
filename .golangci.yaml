@@ -59,8 +59,8 @@ linters-settings:
     - standard
     - default
     - prefix(k8s.io,sigs.k8s.io)
+    - prefix(sigs.k8s.io/multicluster-runtime)
     - prefix(github.com/kcp-dev)
-    - prefix(github.com/multicluster-runtime)
     - prefix(github.com/kcp-dev/multicluster-provider)
     - blank
     - dot
