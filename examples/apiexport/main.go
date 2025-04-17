@@ -24,7 +24,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/kcp-dev/multicluster-provider/virtualworkspace"
+	"github.com/kcp-dev/multicluster-provider/apiexport"
 
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
@@ -61,7 +61,7 @@ func main() {
 
 	var (
 		server   string
-		provider *virtualworkspace.Provider
+		provider *apiexport.Provider
 	)
 
 	pflag.StringVar(&server, "server", "", "Override for kubeconfig server URL")
@@ -79,7 +79,7 @@ func main() {
 	opts := manager.Options{}
 
 	var err error
-	provider, err = virtualworkspace.New(cfg, &apisv1alpha1.APIBinding{}, virtualworkspace.Options{})
+	provider, err = apiexport.New(cfg, &apisv1alpha1.APIBinding{}, apiexport.Options{})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)

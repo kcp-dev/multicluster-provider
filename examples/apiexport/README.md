@@ -5,7 +5,7 @@ This folder contains an example controller for the `virtualworkspace` provider i
 It can be tested by applying the necessary manifests from the respective folder while connected to the `root` workspace of a kcp instance:
 
 ```sh
-$ kubectl apply -f ./manifests/
+$ kubectl apply -f ./manifests/bundle.yaml
 apiexport.apis.kcp.io/examples-apiexport-multicluster created
 workspacetype.tenancy.kcp.io/examples-apiexport-multicluster created
 workspace.tenancy.kcp.io/example1 created

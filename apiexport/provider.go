@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package virtualworkspace
+package apiexport
 
 import (
 	"context"
@@ -44,8 +44,10 @@ import (
 
 var _ multicluster.Provider = &Provider{}
 
-// Provider is a cluster provider that represents each logical cluster in the
-// kcp sense as a cluster in the multicluster-runtime sense.
+// Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that represents each [logical cluster]
+// (in the kcp sense) exposed via a APIExport virtual workspace as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
+//
+// [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
 type Provider struct {
 	config *rest.Config
 	scheme *runtime.Scheme
@@ -59,10 +61,10 @@ type Provider struct {
 	cancelFns map[logicalcluster.Name]context.CancelFunc
 }
 
-// Options are the options for creating a new kcp virtual workspace provider.
+// Options are the options for creating a new instance of the apiexport provider.
 type Options struct {
-	// Scheme is the scheme to use for the provider. It defaults to the
-	// client-go scheme.
+	// Scheme is the scheme to use for the provider. If this is nil, it defaults
+	// to the client-go scheme.
 	Scheme *runtime.Scheme
 
 	// WildcardCache is the wildcard cache to use for the provider. If this is
@@ -70,9 +72,10 @@ type Options struct {
 	WildcardCache WildcardCache
 }
 
-// New creates a new kcp virtual workspace provider. The provided rest.Config
+// New creates a new kcp virtual workspace provider. The provided [rest.Config]
 // must point to a virtual workspace apiserver base path, i.e. up to but without
-// the "/clusters/*" suffix.
+// the '/clusters/*' suffix. This information can be extracted from the APIExport
+// status (deprecated) or an APIExportEndpointSlice status.
 func New(cfg *rest.Config, obj client.Object, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
@@ -214,7 +217,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	return g.Wait()
 }
 
-// Get returns a cluster by name.
+// Get returns a [cluster.Cluster] by logical cluster name. Be aware that workspace paths do not work.
 func (p *Provider) Get(_ context.Context, name string) (cluster.Cluster, error) {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
