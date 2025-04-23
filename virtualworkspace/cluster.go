@@ -49,7 +49,7 @@ func newScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 		clusterName: clusterName,
 	}
 
-	cli, err := client.New(cfg, client.Options{Cache: &client.CacheOptions{Reader: ca}})
+	cli, err := client.New(cfg, client.Options{Cache: &client.CacheOptions{Reader: ca}, Scheme: scheme})
 	if err != nil {
 		return nil, err
 	}
