@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package virtualworkspace
+package apiexport
 
 import (
 	"context"
@@ -40,7 +40,7 @@ import (
 	"github.com/kcp-dev/logicalcluster/v3"
 )
 
-// WildcardCache is a cache that operates on a /clusters/* endpoint.
+// WildcardCache is a cache that operates on a '/clusters/*' endpoint.
 type WildcardCache interface {
 	cache.Cache
 	getSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error)

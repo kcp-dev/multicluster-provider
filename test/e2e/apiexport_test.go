@@ -47,9 +47,9 @@ import (
 	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
 
+	"github.com/kcp-dev/multicluster-provider/apiexport"
 	clusterclient "github.com/kcp-dev/multicluster-provider/client"
 	"github.com/kcp-dev/multicluster-provider/envtest"
-	"github.com/kcp-dev/multicluster-provider/virtualworkspace"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -206,7 +206,7 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 		var (
 			lock        sync.RWMutex
 			engaged     = sets.NewString()
-			p           *virtualworkspace.Provider
+			p           *apiexport.Provider
 			g           *errgroup.Group
 			cancelGroup context.CancelFunc
 		)
@@ -234,7 +234,7 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 			vwConfig := rest.CopyConfig(kcpConfig)
 			vwConfig.Host = vwEndpoint
 			var err error
-			p, err = virtualworkspace.New(vwConfig, &apisv1alpha1.APIBinding{}, virtualworkspace.Options{})
+			p, err = apiexport.New(vwConfig, &apisv1alpha1.APIBinding{}, apiexport.Options{})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("waiting for discovery of the virtual workspace to show 'example.com'")
