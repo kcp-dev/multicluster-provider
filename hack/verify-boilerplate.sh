@@ -25,7 +25,7 @@ echo "Checking file boilerplates…"
 _tools/boilerplate \
   -boilerplates hack/boilerplate \
   -exclude .github \
-  -exclude virtualworkspace/forked_cache_reader.go \
+  -exclude apiexport/forked_cache_reader.go \
   -exclude envtest
 _tools/boilerplate -boilerplates hack/boilerplate/kubernetes \
   -exclude envtest/doc.go \
@@ -33,7 +33,7 @@ _tools/boilerplate -boilerplates hack/boilerplate/kubernetes \
   -exclude envtest/scheme.go \
   -exclude envtest/testing.go \
   -exclude envtest/workspaces.go \
-  envtest virtualworkspace/forked_cache_reader.go
+  envtest apiexport/forked_cache_reader.go
 _tools/boilerplate \
   -boilerplates hack/boilerplate \
   envtest/doc.go \

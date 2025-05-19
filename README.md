@@ -4,11 +4,11 @@ This repository contains an **experimental** provider implementation for [multic
 
 ## Providers
 
-This repository is planned to contain multiple [`Provider`](https://github.com/multicluster-runtime/multicluster-runtime/blob/223b19b990050e373880d57211c90ce86c53fd80/pkg/multicluster/multicluster.go#L52) implementations depending on how your controllers are supposed to interact with kcp.
+This repository is expected to contain multiple [`Provider`](https://github.com/multicluster-runtime/multicluster-runtime/blob/223b19b990050e373880d57211c90ce86c53fd80/pkg/multicluster/multicluster.go#L52) implementations depending on how your controllers are supposed to interact with kcp.
 
 Currently available are:
 
-- [virtualworkspace](./virtualworkspace/): for interacting with virtual workspaces like the `APIExport` one.
+- [apiexport](./apiexport/): for interacting with the [`APIExport` virtual workspace](https://docs.kcp.io/kcp/latest/concepts/apis/exporting-apis/#build-your-controller) (or virtual workspaces with the same semantics).
 
 ## Examples
 
