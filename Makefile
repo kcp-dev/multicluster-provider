@@ -37,16 +37,19 @@ $(GOLANGCI_LINT):
 	  golangci-lint \
 	  ${GOLANGCI_LINT_VERSION}
 
+# wwhrd is installed as a Go module rather than from the provided
+# binaries because there is no arm64 binary available from the author.
+# See https://github.com/frapposelli/wwhrd/issues/141
+
 WWHRD = _tools/wwhrd
-WWHRD_VERSION = 0.4.0
+WWHRD_VERSION = 06b99400ca6db678386ba5dc39bbbdcdadb664ff
 
 .PHONY: $(WWHRD)
 $(WWHRD):
-	@hack/download-tool.sh \
-	  https://github.com/frapposelli/wwhrd/releases/download/v${WWHRD_VERSION}/wwhrd_${WWHRD_VERSION}_${GOOS}_${GOARCH}.tar.gz \
+	@GO_MODULE=true hack/download-tool.sh \
+	  github.com/frapposelli/wwhrd \
 	  wwhrd \
-	  ${WWHRD_VERSION} \
-	  wwhrd
+	  ${WWHRD_VERSION}
 
 BOILERPLATE = _tools/boilerplate
 BOILERPLATE_VERSION = 0.3.0
