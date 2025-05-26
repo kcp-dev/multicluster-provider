@@ -21,7 +21,7 @@ presubmits:
       preset-goproxy: "true"
     spec:
       containers:
-        - image: ghcr.io/kcp-dev/infra/build:1.23.5-1
+        - image: ghcr.io/kcp-dev/infra/build:1.23.9-1
           command:
             - make
             - verify
@@ -38,7 +38,7 @@ presubmits:
       preset-goproxy: "true"
     spec:
       containers:
-        - image: ghcr.io/kcp-dev/infra/build:1.23.5-1
+        - image: ghcr.io/kcp-dev/infra/build:1.23.9-1
           command:
             - make
             - lint
@@ -55,7 +55,7 @@ presubmits:
       preset-goproxy: "true"
     spec:
       containers:
-        - image: ghcr.io/kcp-dev/infra/build:1.23.5-1
+        - image: ghcr.io/kcp-dev/infra/build:1.23.9-1
           command:
             - make
             - test
