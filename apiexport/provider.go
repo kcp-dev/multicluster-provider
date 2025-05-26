@@ -225,7 +225,7 @@ func (p *Provider) Get(_ context.Context, name string) (cluster.Cluster, error) 
 		return cl, nil
 	}
 
-	return nil, fmt.Errorf("cluster %q not found", name)
+	return nil, multicluster.ErrClusterNotFound
 }
 
 // GetWildcard returns the wildcard cache.
