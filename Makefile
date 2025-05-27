@@ -73,7 +73,7 @@ $(YQ):
 	  yq_*
 
 KCP = _tools/kcp
-KCP_VERSION = 0.26.1
+KCP_VERSION = 0.27.1
 
 .PHONY: $(KCP)
 $(KCP):

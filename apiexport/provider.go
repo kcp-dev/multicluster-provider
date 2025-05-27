@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
+	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
 )
 
@@ -70,13 +71,21 @@ type Options struct {
 	// WildcardCache is the wildcard cache to use for the provider. If this is
 	// nil, a new wildcard cache will be created for the given rest.Config.
 	WildcardCache WildcardCache
+
+	// ObjectToWatch is the object type that the provider watches via a /clusters/*
+	// wildcard endpoint to extract information about logical clusters joining and
+	// leaving the "fleet" of (logical) clusters in kcp. If this is nil, it defaults
+	// to [apisv1alpha1.APIBinding]. This might be useful when using this provider
+	// against custom virtual workspaces that are not the APIExport one but share
+	// the same endpoint semantics.
+	ObjectToWatch client.Object
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
 // must point to a virtual workspace apiserver base path, i.e. up to but without
 // the '/clusters/*' suffix. This information can be extracted from the APIExport
 // status (deprecated) or an APIExportEndpointSlice status.
-func New(cfg *rest.Config, obj client.Object, options Options) (*Provider, error) {
+func New(cfg *rest.Config, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
 		options.Scheme = scheme.Scheme
@@ -90,14 +99,17 @@ func New(cfg *rest.Config, obj client.Object, options Options) (*Provider, error
 			return nil, fmt.Errorf("failed to create wildcard cache: %w", err)
 		}
 	}
+	if options.ObjectToWatch == nil {
+		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
+	}
 
 	return &Provider{
 		config: cfg,
 		scheme: options.Scheme,
 		cache:  options.WildcardCache,
-		object: obj,
+		object: options.ObjectToWatch,
 
-		log: log.Log.WithName("kcp-virtualworkspace-cluster-provider"),
+		log: log.Log.WithName("kcp-apiexport-cluster-provider"),
 
 		clusters:  map[logicalcluster.Name]cluster.Cluster{},
 		cancelFns: map[logicalcluster.Name]context.CancelFunc{},

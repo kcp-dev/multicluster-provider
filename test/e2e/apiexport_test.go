@@ -234,7 +234,7 @@ var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
 			vwConfig := rest.CopyConfig(kcpConfig)
 			vwConfig.Host = vwEndpoint
 			var err error
-			p, err = apiexport.New(vwConfig, &apisv1alpha1.APIBinding{}, apiexport.Options{})
+			p, err = apiexport.New(vwConfig, apiexport.Options{})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("waiting for discovery of the virtual workspace to show 'example.com'")
