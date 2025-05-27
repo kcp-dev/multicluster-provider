@@ -79,17 +79,10 @@ func main() {
 	opts := manager.Options{}
 
 	var err error
-	provider, err = apiexport.New(cfg, &apisv1alpha1.APIBinding{}, apiexport.Options{})
+	provider, err = apiexport.New(cfg, apiexport.Options{})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)
-	}
-
-	cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
-		return RoundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			fmt.Println(r.URL)
-			return rt.RoundTrip(r)
-		})
 	}
 
 	mgr, err := mcmanager.New(cfg, provider, opts)
