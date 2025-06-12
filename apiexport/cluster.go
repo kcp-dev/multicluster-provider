@@ -35,7 +35,7 @@ import (
 	"github.com/kcp-dev/logicalcluster/v3"
 )
 
-func newScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme) (*scopedCluster, error) {
+func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme) (*scopedCluster, error) {
 	cfg = rest.CopyConfig(cfg)
 	host, err := url.JoinPath(cfg.Host, clusterName.Path().RequestPath())
 	if err != nil {
