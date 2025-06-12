@@ -20,11 +20,22 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/spf13/pflag"
 
+	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+
+	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
+	"github.com/kcp-dev/kcp/sdk/apis/tenancy/initialization"
+	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+	"github.com/kcp-dev/multicluster-provider/initializingworkspaces"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
+
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -34,16 +45,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
-	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
-
-	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
-	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
-	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
-
-	"github.com/kcp-dev/multicluster-provider/apiexport"
 )
 
 func init() {
@@ -54,16 +55,17 @@ func init() {
 
 func main() {
 	log.SetLogger(zap.New(zap.UseDevMode(true)))
-
 	ctx := signals.SetupSignalHandler()
 	entryLog := log.Log.WithName("entrypoint")
 
 	var (
-		server   string
-		provider *apiexport.Provider
+		server          string
+		initializerName string
+		provider        *initializingworkspaces.Provider
 	)
 
 	pflag.StringVar(&server, "server", "", "Override for kubeconfig server URL")
+	pflag.StringVar(&initializerName, "initializer", "initializer:example", "Name of the initializer to use")
 	pflag.Parse()
 
 	cfg := ctrl.GetConfigOrDie()
@@ -72,13 +74,12 @@ func main() {
 	if server != "" {
 		cfg.Host = server
 	}
-
 	// Setup a Manager, note that this not yet engages clusters, only makes them available.
 	entryLog.Info("Setting up manager")
 	opts := manager.Options{}
 
 	var err error
-	provider, err = apiexport.New(cfg, apiexport.Options{})
+	provider, err = initializingworkspaces.New(cfg, initializingworkspaces.Options{InitializerName: initializerName})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)
@@ -91,8 +92,8 @@ func main() {
 	}
 
 	if err := mcbuilder.ControllerManagedBy(mgr).
-		Named("kcp-configmap-controller").
-		For(&corev1.ConfigMap{}).
+		Named("kcp-initializer-controller").
+		For(&corev1alpha1.LogicalCluster{}).
 		Complete(mcreconcile.Func(
 			func(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
 				log := log.FromContext(ctx).WithValues("cluster", req.ClusterName)
@@ -103,18 +104,41 @@ func main() {
 				}
 				client := cl.GetClient()
 
-				// Retrieve the ConfigMap from the cluster.
-				s := &corev1.ConfigMap{}
-				if err := client.Get(ctx, req.NamespacedName, s); err != nil {
-					if apierrors.IsNotFound(err) {
-						// ConfigMap was deleted.
-						return reconcile.Result{}, nil
-					}
-					return reconcile.Result{}, fmt.Errorf("failed to get configmap: %w", err)
+				lc := &corev1alpha1.LogicalCluster{}
+				if err := client.Get(ctx, req.NamespacedName, lc); err != nil {
+					return reconcile.Result{}, err
 				}
 
-				log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
-
+				// check if your initializer is still set on the logicalcluster
+				if slices.Contains(lc.Status.Initializers, corev1alpha1.LogicalClusterInitializer(initializerName)) {
+					log.Info("Starting to initialize cluster")
+					s := &corev1.ConfigMap{
+						ObjectMeta: ctrl.ObjectMeta{
+							Name:      "kcp-initializer-cm",
+							Namespace: "default",
+						},
+						Data: map[string]string{
+							"test-data": "example-value",
+						},
+					}
+					log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
+					if err := client.Create(ctx, s); err != nil {
+						return reconcile.Result{}, fmt.Errorf("failed to create configmap: %w", err)
+					}
+					// Remove the initializer from the logical cluster status
+					// so that it won't be processed again.
+					initializerName := corev1alpha1.LogicalClusterInitializer(initializerName)
+					if !slices.Contains(lc.Status.Initializers, initializerName) {
+						log.Info("Initializer already absent, skipping patch")
+						return reconcile.Result{}, nil
+					}
+					patch := ctrlclient.MergeFrom(lc.DeepCopy())
+					lc.Status.Initializers = initialization.EnsureInitializerAbsent(initializerName, lc.Status.Initializers)
+					if err := client.Status().Patch(ctx, lc, patch); err != nil {
+						return reconcile.Result{}, err
+					}
+					log.Info("Removed initializer from LogicalCluster status", "name", lc.Name, "uuid", lc.UID)
+				}
 				return reconcile.Result{}, nil
 			},
 		)); err != nil {

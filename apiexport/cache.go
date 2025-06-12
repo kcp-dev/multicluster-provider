@@ -52,7 +52,7 @@ func (c *scopedCache) IndexField(ctx context.Context, obj client.Object, field s
 
 // Get returns a single object from the cache.
 func (c *scopedCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	inf, gvk, scope, err := c.base.getSharedInformer(obj)
+	inf, gvk, scope, err := c.base.GetSharedInformer(obj)
 	if err != nil {
 		return fmt.Errorf("failed to get informer for %T %s: %w", obj, obj.GetObjectKind().GroupVersionKind(), err)
 	}
@@ -70,7 +70,7 @@ func (c *scopedCache) Get(ctx context.Context, key client.ObjectKey, obj client.
 
 // List returns a list of objects from the cache.
 func (c *scopedCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	inf, gvk, scope, err := c.base.getSharedInformer(list)
+	inf, gvk, scope, err := c.base.GetSharedInformer(list)
 	if err != nil {
 		return fmt.Errorf("failed to get informer for %T %s: %w", list, list.GetObjectKind().GroupVersionKind(), err)
 	}

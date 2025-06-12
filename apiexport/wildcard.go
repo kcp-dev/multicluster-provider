@@ -43,7 +43,7 @@ import (
 // WildcardCache is a cache that operates on a '/clusters/*' endpoint.
 type WildcardCache interface {
 	cache.Cache
-	getSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error)
+	GetSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error)
 }
 
 // NewWildcardCache returns a cache.Cache that handles multi-cluster watches
@@ -127,7 +127,7 @@ type wildcardCache struct {
 	readerFailOnMissingInformer bool
 }
 
-func (c *wildcardCache) getSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error) {
+func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error) {
 	gvk, err := apiutil.GVKForObject(obj, c.scheme)
 	if err != nil {
 		return nil, gvk, "", fmt.Errorf("failed to get GVK for object: %w", err)
