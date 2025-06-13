@@ -20,21 +20,22 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/spf13/pflag"
 
-	"github.com/kcp-dev/multicluster-provider/apiexport"
+	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 
+	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
+	"github.com/kcp-dev/kcp/sdk/apis/tenancy/initialization"
+	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+	"github.com/kcp-dev/multicluster-provider/initializingworkspaces"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
-	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
-	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
-	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
-
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -53,6 +54,7 @@ func init() {
 }
 
 func main() {
+	initializerName := "initializer:example"
 	log.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	ctx := signals.SetupSignalHandler()
@@ -60,7 +62,7 @@ func main() {
 
 	var (
 		server   string
-		provider *apiexport.Provider
+		provider *initializingworkspaces.Provider
 	)
 
 	pflag.StringVar(&server, "server", "", "Override for kubeconfig server URL")
@@ -78,7 +80,7 @@ func main() {
 	opts := manager.Options{}
 
 	var err error
-	provider, err = apiexport.New(cfg, apiexport.Options{})
+	provider, err = initializingworkspaces.New(cfg, initializingworkspaces.Options{})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)
@@ -91,7 +93,7 @@ func main() {
 	}
 
 	if err := mcbuilder.ControllerManagedBy(mgr).
-		Named("kcp-configmap-controller").
+		Named("kcp-initializer-controller").
 		For(&corev1.ConfigMap{}).
 		Complete(mcreconcile.Func(
 			func(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
@@ -103,18 +105,46 @@ func main() {
 				}
 				client := cl.GetClient()
 
-				// Retrieve the ConfigMap from the cluster.
-				s := &corev1.ConfigMap{}
-				if err := client.Get(ctx, req.NamespacedName, s); err != nil {
-					if apierrors.IsNotFound(err) {
-						// ConfigMap was deleted.
-						return reconcile.Result{}, nil
-					}
-					return reconcile.Result{}, fmt.Errorf("failed to get configmap: %w", err)
+				lc := &corev1alpha1.LogicalCluster{}
+				if err := client.Get(ctx, req.NamespacedName, lc); err != nil {
+					return reconcile.Result{}, err
 				}
 
-				log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
+				// check if your initializer is still set on the logicalcluster
+				if slices.Contains(lc.Status.Initializers, corev1alpha1.LogicalClusterInitializer(initializerName)) {
 
+					log.Info("Starting to initialize cluster")
+
+					s := &corev1.ConfigMap{
+						ObjectMeta: ctrl.ObjectMeta{
+							Name:      "kcp-initializer-cm",
+							Namespace: req.NamespacedName.Namespace,
+						},
+						Data: map[string]string{
+							"test-data": "example-value",
+						},
+					}
+					if err := client.Create(ctx, s); err != nil {
+						return reconcile.Result{}, fmt.Errorf("failed to create configmap: %w", err)
+					}
+					log.Info("Created ConfigMap", "name", s.Name, "uuid", s.UID)
+					// Remove the initializer from the logical cluster status
+					// so that it won't be processed again.
+
+					initializerName := corev1alpha1.LogicalClusterInitializer(initializerName)
+					if !slices.Contains(lc.Status.Initializers, initializerName) {
+						log.Info("Initializer already absent, skipping patch")
+						return reconcile.Result{}, nil
+					}
+					log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
+
+					patch := ctrlclient.MergeFrom(lc.DeepCopy())
+					lc.Status.Initializers = initialization.EnsureInitializerAbsent(initializerName, lc.Status.Initializers)
+					if err := client.Status().Patch(ctx, lc, patch); err != nil {
+						return reconcile.Result{}, err
+					}
+					log.Info("Removed initializer from LogicalCluster status", "name", lc.Name, "uuid", lc.UID)
+				}
 				return reconcile.Result{}, nil
 			},
 		)); err != nil {
