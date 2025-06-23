@@ -54,18 +54,18 @@ func init() {
 }
 
 func main() {
-	initializerName := "initializer:example"
 	log.SetLogger(zap.New(zap.UseDevMode(true)))
-
 	ctx := signals.SetupSignalHandler()
 	entryLog := log.Log.WithName("entrypoint")
 
 	var (
-		server   string
-		provider *initializingworkspaces.Provider
+		server          string
+		initializerName string
+		provider        *initializingworkspaces.Provider
 	)
 
 	pflag.StringVar(&server, "server", "", "Override for kubeconfig server URL")
+	pflag.StringVar(&initializerName, "initializer", "initializer:example", "Name of the initializer to use")
 	pflag.Parse()
 
 	cfg := ctrl.GetConfigOrDie()
@@ -74,13 +74,12 @@ func main() {
 	if server != "" {
 		cfg.Host = server
 	}
-
 	// Setup a Manager, note that this not yet engages clusters, only makes them available.
 	entryLog.Info("Setting up manager")
 	opts := manager.Options{}
 
 	var err error
-	provider, err = initializingworkspaces.New(cfg, initializingworkspaces.Options{})
+	provider, err = initializingworkspaces.New(cfg, initializingworkspaces.Options{InitializerName: initializerName})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)
@@ -94,7 +93,7 @@ func main() {
 
 	if err := mcbuilder.ControllerManagedBy(mgr).
 		Named("kcp-initializer-controller").
-		For(&corev1.ConfigMap{}).
+		For(&corev1alpha1.LogicalCluster{}).
 		Complete(mcreconcile.Func(
 			func(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
 				log := log.FromContext(ctx).WithValues("cluster", req.ClusterName)
@@ -112,13 +111,11 @@ func main() {
 
 				// check if your initializer is still set on the logicalcluster
 				if slices.Contains(lc.Status.Initializers, corev1alpha1.LogicalClusterInitializer(initializerName)) {
-
 					log.Info("Starting to initialize cluster")
-
 					s := &corev1.ConfigMap{
 						ObjectMeta: ctrl.ObjectMeta{
 							Name:      "kcp-initializer-cm",
-							Namespace: req.NamespacedName.Namespace,
+							Namespace: "default",
 						},
 						Data: map[string]string{
 							"test-data": "example-value",
