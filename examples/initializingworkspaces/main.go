@@ -121,20 +121,17 @@ func main() {
 							"test-data": "example-value",
 						},
 					}
+					log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
 					if err := client.Create(ctx, s); err != nil {
 						return reconcile.Result{}, fmt.Errorf("failed to create configmap: %w", err)
 					}
-					log.Info("Created ConfigMap", "name", s.Name, "uuid", s.UID)
 					// Remove the initializer from the logical cluster status
 					// so that it won't be processed again.
-
 					initializerName := corev1alpha1.LogicalClusterInitializer(initializerName)
 					if !slices.Contains(lc.Status.Initializers, initializerName) {
 						log.Info("Initializer already absent, skipping patch")
 						return reconcile.Result{}, nil
 					}
-					log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
-
 					patch := ctrlclient.MergeFrom(lc.DeepCopy())
 					lc.Status.Initializers = initialization.EnsureInitializerAbsent(initializerName, lc.Status.Initializers)
 					if err := client.Status().Patch(ctx, lc, patch); err != nil {
