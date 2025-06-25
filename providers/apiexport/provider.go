@@ -41,6 +41,7 @@ import (
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
 	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
+	"github.com/kcp-dev/multicluster-provider/shared"
 )
 
 var _ multicluster.Provider = &Provider{}
@@ -52,7 +53,7 @@ var _ multicluster.Provider = &Provider{}
 type Provider struct {
 	config *rest.Config
 	scheme *runtime.Scheme
-	cache  WildcardCache
+	cache  shared.WildcardCache
 	object client.Object
 
 	log logr.Logger
@@ -70,7 +71,7 @@ type Options struct {
 
 	// WildcardCache is the wildcard cache to use for the provider. If this is
 	// nil, a new wildcard cache will be created for the given rest.Config.
-	WildcardCache WildcardCache
+	WildcardCache shared.WildcardCache
 
 	// ObjectToWatch is the object type that the provider watches via a /clusters/*
 	// wildcard endpoint to extract information about logical clusters joining and
@@ -92,7 +93,7 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 	}
 	if options.WildcardCache == nil {
 		var err error
-		options.WildcardCache, err = NewWildcardCache(cfg, cache.Options{
+		options.WildcardCache, err = shared.NewWildcardCache(cfg, cache.Options{
 			Scheme: options.Scheme,
 		})
 		if err != nil {
@@ -155,7 +156,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 
 			// create new scoped cluster.
 			clusterCtx, cancel := context.WithCancel(ctx)
-			cl, err := NewScopedCluster(p.config, clusterName, p.cache, p.scheme)
+			cl, err := shared.NewScopedCluster(p.config, clusterName, p.cache, p.scheme)
 			if err != nil {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 				cancel()

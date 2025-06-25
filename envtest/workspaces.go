@@ -170,6 +170,67 @@ func NewWorkspaceFixture(t TestingT, clusterClient kcpclient.ClusterClient, pare
 	return ws, parent.Join(ws.Name)
 }
 
+func NewInitializingWorkspaceFixture(t TestingT, clusterClient kcpclient.ClusterClient, parent logicalcluster.Path, options ...WorkspaceOption) (*tenancyv1alpha1.Workspace, logicalcluster.Path) {
+	t.Helper()
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	t.Cleanup(cancelFunc)
+
+	ws := &tenancyv1alpha1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "e2e-workspace-",
+		},
+		Spec: tenancyv1alpha1.WorkspaceSpec{
+			Type: tenancyv1alpha1.WorkspaceTypeReference{
+				Name: tenancyv1alpha1.WorkspaceTypeName("universal"),
+				Path: "root",
+			},
+		},
+	}
+	for _, opt := range options {
+		opt(ws)
+	}
+
+	// we are referring here to a WorkspaceType that may have just been created; if the admission controller
+	// does not have a fresh enough cache, our request will be denied as the admission controller does not know the
+	// type exists. Therefore, we can require.Eventually our way out of this problem. We expect users to create new
+	// types very infrequently, so we do not think this will be a serious UX issue in the product.
+	Eventually(t, func() (bool, string) {
+		err := clusterClient.Cluster(parent).Create(ctx, ws)
+		return err == nil, fmt.Sprintf("error creating workspace under %s: %v", parent, err)
+	}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to create %s workspace under %s", ws.Spec.Type.Name, parent)
+
+	wsName := ws.Name
+	t.Cleanup(func() {
+		if os.Getenv("PRESERVE") != "" {
+			return
+		}
+
+		ctx, cancelFn := context.WithDeadline(context.Background(), time.Now().Add(time.Second*30))
+		defer cancelFn()
+
+		err := clusterClient.Cluster(parent).Delete(ctx, ws)
+		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
+			return // ignore not found and forbidden because this probably means the parent has been deleted
+		}
+		require.NoErrorf(t, err, "failed to delete workspace %s", wsName)
+	})
+
+	Eventually(t, func() (bool, string) {
+		err := clusterClient.Cluster(parent).Get(ctx, client.ObjectKey{Name: ws.Name}, ws)
+		require.Falsef(t, apierrors.IsNotFound(err), "workspace %s was deleted", parent.Join(ws.Name))
+		require.NoError(t, err, "failed to get workspace %s", parent.Join(ws.Name))
+		if actual, expected := ws.Status.Phase, corev1alpha1.LogicalClusterPhaseInitializing; actual != expected {
+			return false, fmt.Sprintf("workspace phase is %s, not %s\n\n%s", actual, expected, toYaml(t, ws))
+		}
+		return true, ""
+	}, workspaceInitTimeout, time.Millisecond*100, "%s workspace %s is not stuck on initializing", ws.Spec.Type, parent.Join(ws.Name))
+
+	t.Logf("Created %s workspace %s as /clusters/%s on shard %q", ws.Spec.Type, parent.Join(ws.Name), ws.Spec.Cluster, WorkspaceShardOrDie(t, clusterClient, ws).Name)
+
+	return ws, parent.Join(ws.Name)
+}
+
 // WorkspaceShard returns the shard that a workspace is scheduled on.
 func WorkspaceShard(ctx context.Context, kcpClient kcpclient.ClusterClient, ws *tenancyv1alpha1.Workspace) (*corev1alpha1.Shard, error) {
 	shards := &corev1alpha1.ShardList{}
