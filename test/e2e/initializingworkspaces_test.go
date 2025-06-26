@@ -44,7 +44,7 @@ import (
 
 	clusterclient "github.com/kcp-dev/multicluster-provider/client"
 	"github.com/kcp-dev/multicluster-provider/envtest"
-	"github.com/kcp-dev/multicluster-provider/providers/initializingworkspaces"
+	"github.com/kcp-dev/multicluster-provider/initializingworkspaces"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -137,7 +137,7 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 			wt := &tenancyv1alpha1.WorkspaceType{}
 			err = cli.Cluster(core.RootCluster.Path()).Get(ctx, client.ObjectKey{Name: workspaceTypeName}, wt)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(wt.Status.VirtualWorkspaces)).To(BeNumerically(">", 0))
+			Expect(wt.Status.VirtualWorkspaces).ToNot(BeEmpty())
 
 			vwConfig := rest.CopyConfig(kcpConfig)
 			vwConfig.Host = wt.Status.VirtualWorkspaces[0].URL
