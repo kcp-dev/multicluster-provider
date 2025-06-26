@@ -20,16 +20,15 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -45,7 +44,7 @@ import (
 
 	clusterclient "github.com/kcp-dev/multicluster-provider/client"
 	"github.com/kcp-dev/multicluster-provider/envtest"
-	"github.com/kcp-dev/multicluster-provider/providers/initializingworkspaces"
+	"github.com/kcp-dev/multicluster-provider/initializingworkspaces"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -59,9 +58,10 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 		ctx    context.Context
 		cancel context.CancelFunc
 
-		cli                    clusterclient.ClusterClient
-		workspace1, workspace2 logicalcluster.Path
-		mgr                    mcmanager.Manager
+		cli              clusterclient.ClusterClient
+		ws1Path, ws2Path logicalcluster.Path
+		ws1, ws2         *tenancyv1alpha1.Workspace
+		mgr              mcmanager.Manager
 	)
 
 	BeforeAll(func() {
@@ -95,23 +95,23 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to wait for WorkspaceType to be ready")
 
 		By("creating Workspaces with the WorkspaceType with initializers")
-		_, workspace1 = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(),
+		ws1, ws1Path = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(),
 			envtest.WithNamePrefix("init-ws1"),
-			envtest.WithType(core.RootCluster.Path(), tenancyv1alpha1.WorkspaceTypeName("e2e-test-ws-type")))
+			envtest.WithType(core.RootCluster.Path(), tenancyv1alpha1.WorkspaceTypeName(workspaceTypeName)))
 
-		_, workspace2 = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(),
+		ws2, ws2Path = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(),
 			envtest.WithNamePrefix("init-ws2"),
-			envtest.WithType(core.RootCluster.Path(), tenancyv1alpha1.WorkspaceTypeName("e2e-test-ws-type")))
+			envtest.WithType(core.RootCluster.Path(), tenancyv1alpha1.WorkspaceTypeName(workspaceTypeName)))
 	})
 
 	It("sees both clusters with initializers", func() {
 		By("getting LogicalCluster for workspaces and their cluster names")
 		lc1 := &kcpcorev1alpha1.LogicalCluster{}
-		err := cli.Cluster(workspace1).Get(ctx, client.ObjectKey{Name: "cluster"}, lc1)
+		err := cli.Cluster(ws1Path).Get(ctx, client.ObjectKey{Name: "cluster"}, lc1)
 		Expect(err).NotTo(HaveOccurred())
 
 		lc2 := &kcpcorev1alpha1.LogicalCluster{}
-		err = cli.Cluster(workspace2).Get(ctx, client.ObjectKey{Name: "cluster"}, lc2)
+		err = cli.Cluster(ws2Path).Get(ctx, client.ObjectKey{Name: "cluster"}, lc2)
 		Expect(err).NotTo(HaveOccurred())
 		envtest.Eventually(GinkgoT(), func() (bool, string) {
 			return slices.Contains(lc1.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(initName)) && slices.Contains(lc2.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(initName)),
@@ -121,24 +121,23 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 
 	Describe("with a multicluster provider and manager", func() {
 		var (
-			lock                sync.RWMutex
 			engaged             = sets.NewString()
 			p                   *initializingworkspaces.Provider
 			g                   *errgroup.Group
 			cancelGroup         context.CancelFunc
-			configMapsCreated   = sets.NewString()
 			initializersRemoved = sets.NewString()
 		)
 
 		BeforeAll(func() {
+			cli, err := clusterclient.New(kcpConfig, client.Options{})
+			Expect(err).NotTo(HaveOccurred())
 			By("creating a multicluster provider for initializing workspaces")
-			var err error
 
 			// Get the initializing workspaces virtual workspace URL
 			wt := &tenancyv1alpha1.WorkspaceType{}
-			err = cli.Cluster(core.RootCluster.Path()).Get(ctx, client.ObjectKey{Name: "e2e-test-ws-type"}, wt)
+			err = cli.Cluster(core.RootCluster.Path()).Get(ctx, client.ObjectKey{Name: workspaceTypeName}, wt)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(wt.Status.VirtualWorkspaces)).To(BeNumerically(">", 0))
+			Expect(wt.Status.VirtualWorkspaces).ToNot(BeEmpty())
 
 			vwConfig := rest.CopyConfig(kcpConfig)
 			vwConfig.Host = wt.Status.VirtualWorkspaces[0].URL
@@ -155,55 +154,37 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 
 			By("creating a reconciler for LogicalClusters")
 			err = mcbuilder.ControllerManagedBy(mgr).
-				Named("logicalclusters").
+				Named("kcp-initializer-controller").
 				For(&kcpcorev1alpha1.LogicalCluster{}).
-				Complete(mcreconcile.Func(func(ctx context.Context, request mcreconcile.Request) (reconcile.Result, error) {
-					By(fmt.Sprintf("reconciling LogicalCluster %s in cluster %q", request.Name, request.ClusterName))
-					lock.Lock()
-					defer lock.Unlock()
-					engaged.Insert(request.ClusterName)
-					cl, err := mgr.GetCluster(ctx, request.ClusterName)
-					if err != nil {
-						return reconcile.Result{}, err
-					}
+				Complete(mcreconcile.Func(
+					func(ctx context.Context, request mcreconcile.Request) (ctrl.Result, error) {
+						By(fmt.Sprintf("reconciling LogicalCluster %s in cluster %q", request.Name, request.ClusterName))
+						cl, err := mgr.GetCluster(ctx, request.ClusterName)
+						if err != nil {
+							return reconcile.Result{}, err
+						}
+						clusterClient := cl.GetClient()
 
-					lc := &kcpcorev1alpha1.LogicalCluster{}
-					if err := cl.GetClient().Get(ctx, request.NamespacedName, lc); err != nil {
-						return reconcile.Result{}, client.IgnoreNotFound(err)
-					}
-
-					initializer := kcpcorev1alpha1.LogicalClusterInitializer(initName)
-					hasInitializer := slices.Contains(lc.Status.Initializers, initializer)
-
-					if hasInitializer {
-						cm := &corev1.ConfigMap{
-							ObjectMeta: metav1.ObjectMeta{
-								Name:      "initializer-test-cm",
-								Namespace: "default",
-							},
-							Data: map[string]string{
-								"cluster": request.ClusterName,
-								"test":    "value",
-							},
+						lc := &kcpcorev1alpha1.LogicalCluster{}
+						if err := clusterClient.Get(ctx, request.NamespacedName, lc); err != nil {
+							return reconcile.Result{}, err
 						}
 
-						if err := cl.GetClient().Create(ctx, cm); err == nil {
-							lock.Lock()
-							configMapsCreated.Insert(request.ClusterName)
-							lock.Unlock()
-						}
+						engaged.Insert(request.ClusterName)
+						initializer := kcpcorev1alpha1.LogicalClusterInitializer(initName)
 
-						patch := client.MergeFrom(lc.DeepCopy())
-						lc.Status.Initializers = initialization.EnsureInitializerAbsent(initializer, lc.Status.Initializers)
-						if err := cl.GetClient().Status().Patch(ctx, lc, patch); err == nil {
-							lock.Lock()
+						if slices.Contains(lc.Status.Initializers, initializer) {
+							By(fmt.Sprintf("removing initializer %q from LogicalCluster %s in cluster %q", initName, request.Name, request.ClusterName))
+
+							patch := client.MergeFrom(lc.DeepCopy())
+							lc.Status.Initializers = initialization.EnsureInitializerAbsent(initializer, lc.Status.Initializers)
+							if err := clusterClient.Status().Patch(ctx, lc, patch); err != nil {
+								return reconcile.Result{}, err
+							}
 							initializersRemoved.Insert(request.ClusterName)
-							lock.Unlock()
 						}
-					}
-
-					return reconcile.Result{}, nil
-				}))
+						return reconcile.Result{}, nil
+					}))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("starting the provider and manager")
@@ -217,60 +198,41 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 				return mgr.Start(groupContext)
 			})
 		})
-		It("creates ConfigMaps in both workspaces", func() {
-			// Wait for ConfigMap in workspace1
+		It("engages both Logical Clusters with initializers", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
-				cm := &corev1.ConfigMap{}
-				err := cli.Cluster(workspace1).Get(ctx,
-					client.ObjectKey{Namespace: "default", Name: "initializer-test-cm"},
-					cm)
-				if err != nil {
-					return false, fmt.Sprintf("failed to get ConfigMap in workspace1: %v", err)
-				}
-				return true, ""
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to create ConfigMap in workspace1")
+				return engaged.Has(ws1.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws1.Spec.Cluster, engaged.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws1.Spec.Cluster, engaged.List())
 
-			// Wait for ConfigMap in workspace2
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
-				cm := &corev1.ConfigMap{}
-				err := cli.Cluster(workspace2).Get(ctx,
-					client.ObjectKey{Namespace: "default", Name: "initializer-test-cm"},
-					cm)
-				if err != nil {
-					return false, fmt.Sprintf("failed to get ConfigMap in workspace2: %v", err)
-				}
-				return true, ""
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to create ConfigMap in workspace2")
+				return engaged.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
+
+			fmt.Println("Engaged clusters:", engaged.List())
+			fmt.Println("Workspace 2:", ws2.Spec.Cluster)
 		})
 
-		It("has removed initializers from both workspaces", func() {
-			// Verify initializer removed in workspace1
+		It("removes initializers from the both clusters after engaging", func() {
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				return initializersRemoved.Has(ws1.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
+
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				return initializersRemoved.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
+
+			By("checking if LogicalClusters objects have no initializers left")
+			var err error
 			lc1 := &kcpcorev1alpha1.LogicalCluster{}
-			err := cli.Cluster(workspace1).Get(ctx, client.ObjectKey{Name: "cluster"}, lc1)
+			err = cli.Cluster(ws1Path).Get(ctx, client.ObjectKey{Name: "cluster"}, lc1)
 			Expect(err).NotTo(HaveOccurred())
 
-			hasInitializer := false
-			for _, init := range lc1.Status.Initializers {
-				if string(init) == "root:e2e-test-ws-type" {
-					hasInitializer = true
-					break
-				}
-			}
-			Expect(hasInitializer).To(BeFalse())
-
-			// Verify initializer removed in workspace2
 			lc2 := &kcpcorev1alpha1.LogicalCluster{}
-			err = cli.Cluster(workspace2).Get(ctx, client.ObjectKey{Name: "cluster"}, lc2)
+			err = cli.Cluster(ws2Path).Get(ctx, client.ObjectKey{Name: "cluster"}, lc2)
 			Expect(err).NotTo(HaveOccurred())
-
-			hasInitializer = false
-			for _, init := range lc2.Status.Initializers {
-				if string(init) == "root:e2e-test-ws-type" {
-					hasInitializer = true
-					break
-				}
-			}
-			Expect(hasInitializer).To(BeFalse())
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				return !slices.Contains(lc1.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(initName)) && !slices.Contains(lc2.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(initName)),
+					fmt.Sprintf("Initializer not set: %v", lc1.Status) + " " + fmt.Sprintf("%v", lc2.Status)
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializers in both clusters")
 		})
 
 		AfterAll(func() {

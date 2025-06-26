@@ -170,6 +170,8 @@ func NewWorkspaceFixture(t TestingT, clusterClient kcpclient.ClusterClient, pare
 	return ws, parent.Join(ws.Name)
 }
 
+// NewInitializingWorkspaceFixture creates a new workspace under the given parent
+// using the given client, and waits for it to be stuck in the initializing phase.
 func NewInitializingWorkspaceFixture(t TestingT, clusterClient kcpclient.ClusterClient, parent logicalcluster.Path, options ...WorkspaceOption) (*tenancyv1alpha1.Workspace, logicalcluster.Path) {
 	t.Helper()
 

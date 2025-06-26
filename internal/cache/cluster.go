@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package shared
+package cache
 
 import (
 	"context"
@@ -35,7 +35,8 @@ import (
 	"github.com/kcp-dev/logicalcluster/v3"
 )
 
-func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme) (*scopedCluster, error) {
+// NewScopedCluster constructs a new cluster.Cluster that operates on a specific logical cluster.
+func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme) (*ScopedCluster, error) {
 	cfg = rest.CopyConfig(cfg)
 	host, err := url.JoinPath(cfg.Host, clusterName.Path().RequestPath())
 	if err != nil {
@@ -64,7 +65,7 @@ func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 		return nil, err
 	}
 
-	return &scopedCluster{
+	return &ScopedCluster{
 		clusterName: clusterName,
 		config:      cfg,
 		scheme:      scheme,
@@ -75,10 +76,10 @@ func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 	}, nil
 }
 
-var _ cluster.Cluster = &scopedCluster{}
+var _ cluster.Cluster = &ScopedCluster{}
 
-// scopedCluster is a cluster that operates on a specific namespace.
-type scopedCluster struct {
+// ScopedCluster is a cluster that operates on a specific namespace.
+type ScopedCluster struct {
 	clusterName logicalcluster.Name
 
 	scheme     *runtime.Scheme
@@ -89,47 +90,52 @@ type scopedCluster struct {
 	cache      cache.Cache
 }
 
-func (c *scopedCluster) GetHTTPClient() *http.Client {
+// GetHTTPClient returns the HTTP client scoped to the cluster.
+func (c *ScopedCluster) GetHTTPClient() *http.Client {
 	return c.httpClient
 }
 
-func (c *scopedCluster) GetConfig() *rest.Config {
+// GetConfig returns the rest.Config scoped to the cluster.
+func (c *ScopedCluster) GetConfig() *rest.Config {
 	return c.config
 }
 
-func (c *scopedCluster) GetScheme() *runtime.Scheme {
+// GetScheme returns the scheme scoped to the cluster.
+func (c *ScopedCluster) GetScheme() *runtime.Scheme {
 	return c.scheme
 }
 
-func (c *scopedCluster) GetFieldIndexer() client.FieldIndexer {
+// GetFieldIndexer returns a FieldIndexer scoped to the cluster.
+func (c *ScopedCluster) GetFieldIndexer() client.FieldIndexer {
 	return c.cache
 }
 
-func (c *scopedCluster) GetRESTMapper() meta.RESTMapper {
+// GetRESTMapper returns a RESTMapper scoped to the cluster.
+func (c *ScopedCluster) GetRESTMapper() meta.RESTMapper {
 	return c.mapper
 }
 
 // GetCache returns a cache.Cache.
-func (c *scopedCluster) GetCache() cache.Cache {
+func (c *ScopedCluster) GetCache() cache.Cache {
 	return c.cache
 }
 
 // GetClient returns a client scoped to the namespace.
-func (c *scopedCluster) GetClient() client.Client {
+func (c *ScopedCluster) GetClient() client.Client {
 	return c.client
 }
 
 // GetEventRecorderFor returns a new EventRecorder for the provided name.
-func (c *scopedCluster) GetEventRecorderFor(name string) record.EventRecorder {
+func (c *ScopedCluster) GetEventRecorderFor(name string) record.EventRecorder {
 	panic("implement me")
 }
 
 // GetAPIReader returns a reader against the cluster.
-func (c *scopedCluster) GetAPIReader() client.Reader {
+func (c *ScopedCluster) GetAPIReader() client.Reader {
 	return c.cache
 }
 
 // Start starts the cluster.
-func (c *scopedCluster) Start(ctx context.Context) error {
+func (c *ScopedCluster) Start(ctx context.Context) error {
 	return errors.New("scoped cluster cannot be started")
 }

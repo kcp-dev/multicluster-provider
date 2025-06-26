@@ -14,12 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package initializingworkspaces
+package apiexport
 
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 
@@ -40,19 +39,23 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
-	kcpcorev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
+	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
-	"github.com/kcp-dev/multicluster-provider/shared"
+
+	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 )
 
 var _ multicluster.Provider = &Provider{}
 
+// Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that represents each [logical cluster]
+// (in the kcp sense) exposed via a APIExport virtual workspace as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
+//
+// [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
 type Provider struct {
-	config          *rest.Config
-	scheme          *runtime.Scheme
-	cache           shared.WildcardCache
-	object          client.Object
-	initializerName string
+	config *rest.Config
+	scheme *runtime.Scheme
+	cache  mcpcache.WildcardCache
+	object client.Object
 
 	log logr.Logger
 
@@ -61,7 +64,7 @@ type Provider struct {
 	cancelFns map[logicalcluster.Name]context.CancelFunc
 }
 
-// Options are the options for creating a new instance of the initializing workspaces provider.
+// Options are the options for creating a new instance of the apiexport provider.
 type Options struct {
 	// Scheme is the scheme to use for the provider. If this is nil, it defaults
 	// to the client-go scheme.
@@ -69,52 +72,46 @@ type Options struct {
 
 	// WildcardCache is the wildcard cache to use for the provider. If this is
 	// nil, a new wildcard cache will be created for the given rest.Config.
-	WildcardCache shared.WildcardCache
+	WildcardCache mcpcache.WildcardCache
 
-	// ObjectToWatch is the object type that the provider watches. If this is nil,
-	// it defaults to LogicalCluster.
+	// ObjectToWatch is the object type that the provider watches via a /clusters/*
+	// wildcard endpoint to extract information about logical clusters joining and
+	// leaving the "fleet" of (logical) clusters in kcp. If this is nil, it defaults
+	// to [apisv1alpha1.APIBinding]. This might be useful when using this provider
+	// against custom virtual workspaces that are not the APIExport one but share
+	// the same endpoint semantics.
 	ObjectToWatch client.Object
-
-	// InitializerName is the name of the initializer to watch for in LogicalCluster.Status.Initializers
-	InitializerName string
 }
 
-// New creates a new KCP initializing workspaces provider.
+// New creates a new kcp virtual workspace provider. The provided [rest.Config]
+// must point to a virtual workspace apiserver base path, i.e. up to but without
+// the '/clusters/*' suffix. This information can be extracted from the APIExport
+// status (deprecated) or an APIExportEndpointSlice status.
 func New(cfg *rest.Config, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
 		options.Scheme = scheme.Scheme
-		if err := kcpcorev1alpha1.AddToScheme(options.Scheme); err != nil {
-			return nil, fmt.Errorf("failed to add kcp core scheme: %w", err)
-		}
 	}
-
 	if options.WildcardCache == nil {
 		var err error
-		options.WildcardCache, err = shared.NewWildcardCache(cfg, cache.Options{
+		options.WildcardCache, err = mcpcache.NewWildcardCache(cfg, cache.Options{
 			Scheme: options.Scheme,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create wildcard cache: %w", err)
 		}
 	}
-
 	if options.ObjectToWatch == nil {
-		options.ObjectToWatch = &kcpcorev1alpha1.LogicalCluster{}
-	}
-
-	if options.InitializerName == "" {
-		return nil, fmt.Errorf("initializer name cannot be empty")
+		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
 	}
 
 	return &Provider{
-		config:          cfg,
-		scheme:          options.Scheme,
-		cache:           options.WildcardCache,
-		object:          options.ObjectToWatch,
-		initializerName: options.InitializerName,
+		config: cfg,
+		scheme: options.Scheme,
+		cache:  options.WildcardCache,
+		object: options.ObjectToWatch,
 
-		log: log.Log.WithName("kcp-initializing-workspaces-provider"),
+		log: log.Log.WithName("kcp-apiexport-cluster-provider"),
 
 		clusters:  map[logicalcluster.Name]cluster.Cluster{},
 		cancelFns: map[logicalcluster.Name]context.CancelFunc{},
@@ -125,20 +122,63 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	g, ctx := errgroup.WithContext(ctx)
 
-	// Watch LogicalClusters with initializers
+	// Watch logical clusters and engage them as clusters in multicluster-runtime.
 	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(false))
 	if err != nil {
 		return fmt.Errorf("failed to get %T informer: %w", p.object, err)
 	}
-
 	shInf, _, _, err := p.cache.GetSharedInformer(p.object)
 	if err != nil {
 		return fmt.Errorf("failed to get shared informer: %w", err)
 	}
-
 	if _, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			p.handleLogicalClusterEvent(ctx, mgr, obj)
+			cobj, ok := obj.(client.Object)
+			if !ok {
+				klog.Errorf("unexpected object type %T", obj)
+				return
+			}
+			clusterName := logicalcluster.From(cobj)
+
+			// fast path: cluster exists already, there is nothing to do.
+			p.lock.RLock()
+			if _, ok := p.clusters[clusterName]; ok {
+				p.lock.RUnlock()
+				return
+			}
+			p.lock.RUnlock()
+
+			// slow path: take write lock to add a new cluster (unless it appeared in the meantime).
+			p.lock.Lock()
+			if _, ok := p.clusters[clusterName]; ok {
+				p.lock.Unlock()
+				return
+			}
+
+			// create new scoped cluster.
+			clusterCtx, cancel := context.WithCancel(ctx)
+			cl, err := mcpcache.NewScopedCluster(p.config, clusterName, p.cache, p.scheme)
+			if err != nil {
+				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
+				cancel()
+				p.lock.Unlock()
+				return
+			}
+			p.clusters[clusterName] = cl
+			p.cancelFns[clusterName] = cancel
+			p.lock.Unlock()
+
+			p.log.Info("engaging cluster", "cluster", clusterName)
+			if err := mgr.Engage(clusterCtx, clusterName.String(), cl); err != nil {
+				p.log.Error(err, "failed to engage cluster", "cluster", clusterName)
+				p.lock.Lock()
+				cancel()
+				if p.clusters[clusterName] == cl {
+					delete(p.clusters, clusterName)
+					delete(p.cancelFns, clusterName)
+				}
+				p.lock.Unlock()
+			}
 		},
 		DeleteFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
@@ -157,7 +197,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 
 			clusterName := logicalcluster.From(cobj)
 
-			// check if there is no object left in the index
+			// check if there is no object left in the index.
 			keys, err := shInf.GetIndexer().IndexKeys(kcpcache.ClusterIndexName, clusterName.String())
 			if err != nil {
 				p.log.Error(err, "failed to get index keys", "cluster", clusterName)
@@ -167,7 +207,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 				p.lock.Lock()
 				cancel, ok := p.cancelFns[clusterName]
 				if ok {
-					p.log.Info("disengaging initializing workspace", "cluster", clusterName)
+					p.log.Info("disengaging cluster", "cluster", clusterName)
 					cancel()
 					delete(p.cancelFns, clusterName)
 					delete(p.clusters, clusterName)
@@ -191,80 +231,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	return g.Wait()
 }
 
-// handleLogicalClusterEvent processes LogicalCluster events and engages initializing workspaces
-func (p *Provider) handleLogicalClusterEvent(ctx context.Context, mgr mcmanager.Manager, obj any) {
-	cobj, ok := obj.(client.Object)
-	if !ok {
-		klog.Errorf("unexpected object type %T", obj)
-		return
-	}
-
-	lc, ok := cobj.(*kcpcorev1alpha1.LogicalCluster)
-	if !ok {
-		klog.Errorf("unexpected object type %T, expected LogicalCluster", cobj)
-		return
-	}
-
-	// Check if our initializer is in the initializers list
-	hasInitializer := slices.Contains(lc.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(p.initializerName))
-	clusterName := logicalcluster.From(cobj)
-
-	// If our initializer is not present, we need to disengage the cluster if it exists
-	if !hasInitializer {
-		p.lock.Lock()
-		cancel, ok := p.cancelFns[clusterName]
-		if ok {
-			p.log.Info("disengaging non-initializing workspace", "cluster", clusterName)
-			cancel()
-			delete(p.cancelFns, clusterName)
-			delete(p.clusters, clusterName)
-		}
-		p.lock.Unlock()
-		return
-	}
-
-	// fast path: cluster exists already, there is nothing to do.
-	p.lock.RLock()
-	if _, ok := p.clusters[clusterName]; ok {
-		p.lock.RUnlock()
-		return
-	}
-	p.lock.RUnlock()
-
-	// slow path: take write lock to add a new cluster (unless it appeared in the meantime).
-	p.lock.Lock()
-	if _, ok := p.clusters[clusterName]; ok {
-		p.lock.Unlock()
-		return
-	}
-
-	// create new scoped cluster.
-	clusterCtx, cancel := context.WithCancel(ctx)
-	cl, err := shared.NewScopedCluster(p.config, clusterName, p.cache, p.scheme)
-	if err != nil {
-		p.log.Error(err, "failed to create cluster for initializing workspace", "cluster", clusterName)
-		cancel()
-		p.lock.Unlock()
-		return
-	}
-	p.clusters[clusterName] = cl
-	p.cancelFns[clusterName] = cancel
-	p.lock.Unlock()
-
-	p.log.Info("engaging initializing workspace", "cluster", clusterName, "initializer", p.initializerName)
-	if err := mgr.Engage(clusterCtx, clusterName.String(), cl); err != nil {
-		p.log.Error(err, "failed to engage initializing workspace", "cluster", clusterName)
-		p.lock.Lock()
-		cancel()
-		if p.clusters[clusterName] == cl {
-			delete(p.clusters, clusterName)
-			delete(p.cancelFns, clusterName)
-		}
-		p.lock.Unlock()
-	}
-}
-
-// Get returns a [cluster.Cluster] by logical cluster name.
+// Get returns a [cluster.Cluster] by logical cluster name. Be aware that workspace paths do not work.
 func (p *Provider) Get(_ context.Context, name string) (cluster.Cluster, error) {
 	p.lock.RLock()
 	defer p.lock.RUnlock()

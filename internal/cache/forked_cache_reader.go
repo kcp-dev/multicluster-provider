@@ -17,7 +17,7 @@ limitations under the License.
 // This file has been forked from https://github.com/kubernetes-sigs/controller-runtime/blob/78b3ce63cf927debb122dd641290a89d20d776e3/pkg/cache/internal/cache_reader.go.
 // It's been modified to allow scoping a CacheReader to a specific logical cluster.
 
-package shared
+package cache
 
 import (
 	"context"
