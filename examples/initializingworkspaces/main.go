@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/pflag"
 
 	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
 	"github.com/kcp-dev/kcp/sdk/apis/tenancy/initialization"
@@ -112,6 +113,39 @@ func main() {
 				// check if your initializer is still set on the logicalcluster
 				if slices.Contains(lc.Status.Initializers, corev1alpha1.LogicalClusterInitializer(initializerName)) {
 					log.Info("Starting to initialize cluster")
+
+					workspaceName := fmt.Sprintf("initialized-workspace-%s", req.Name)
+					ws := &tenancyv1alpha1.Workspace{}
+					err = client.Get(ctx, ctrlclient.ObjectKey{Name: workspaceName}, ws)
+					if err != nil {
+						if !apierrors.IsNotFound(err) {
+							log.Error(err, "Error checking for existing workspace")
+							return reconcile.Result{}, err
+						}
+
+						log.Info("Creating child workspace", "name", workspaceName)
+						ws = &tenancyv1alpha1.Workspace{
+							ObjectMeta: ctrl.ObjectMeta{
+								Name: workspaceName,
+							},
+						}
+
+						if err := client.Create(ctx, ws); err != nil {
+							log.Error(err, "Failed to create workspace")
+							return reconcile.Result{Requeue: true}, err
+						}
+						log.Info("Workspace created successfully", "name", workspaceName)
+					} else {
+						log.Info("Found existing workspace", "name", workspaceName, "phase", ws.Status.Phase)
+					}
+
+					if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady {
+						log.Info("Workspace not ready yet", "current-phase", ws.Status.Phase)
+						return reconcile.Result{Requeue: true}, nil
+					}
+
+					log.Info("Workspace is ready, removing initializer")
+
 					s := &corev1.ConfigMap{
 						ObjectMeta: ctrl.ObjectMeta{
 							Name:      "kcp-initializer-cm",
