@@ -243,11 +243,20 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, mgr mcmanager.
 		return
 	}
 
-	// create new scoped cluster.
+	// create new specific cluster.
 	clusterCtx, cancel := context.WithCancel(ctx)
-	cl, err := mcpcache.NewScopedCluster(p.config, clusterName, p.cache, p.scheme)
+	cl, err := p.createSpecificCluster(clusterName, p.scheme)
 	if err != nil {
 		p.log.Error(err, "failed to create cluster for initializing workspace", "cluster", clusterName)
+		cancel()
+		p.lock.Unlock()
+		return
+	}
+
+	// Start the cluster's cache and wait for it to sync BEFORE engaging
+	p.log.Info("starting cluster cache", "cluster", clusterName)
+	if err := cl.Start(clusterCtx); err != nil {
+		p.log.Error(err, "failed to start cluster cache", "cluster", clusterName)
 		cancel()
 		p.lock.Unlock()
 		return
