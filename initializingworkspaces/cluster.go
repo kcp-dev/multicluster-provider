@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -52,7 +53,9 @@ type specificCluster struct {
 // New method to create a cluster with specific URL
 func (p *Provider) createSpecificCluster(clusterName logicalcluster.Name, scheme *runtime.Scheme) (cluster.Cluster, error) {
 	specificConfig := rest.CopyConfig(p.config)
-	specificConfig.Host = fmt.Sprintf("%s/clusters/%s", specificConfig.Host, clusterName)
+	host := p.config.Host
+	host = strings.TrimSuffix(host, "/clusters/*")
+	specificConfig.Host = fmt.Sprintf("%s/clusters/%s", host, clusterName)
 
 	cli, err := client.New(specificConfig, client.Options{Scheme: scheme})
 	if err != nil {
@@ -137,12 +140,17 @@ func (c *specificCluster) GetAPIReader() client.Reader {
 func (c *specificCluster) Start(ctx context.Context) error {
 	go func() {
 		if err := c.cache.Start(ctx); err != nil {
-			klog.Errorf("Error starting cache for cluster %s: %v", c.clusterName, err)
+			klog.Errorf("Failed to start cache for cluster %s: %v", c.clusterName, err)
 		}
 	}()
 
-	_, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Wait for cache to sync
+	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+
+	if !c.cache.WaitForCacheSync(syncCtx) {
+		return fmt.Errorf("failed to sync cache for cluster %s", c.clusterName)
+	}
 
 	return nil
 }
