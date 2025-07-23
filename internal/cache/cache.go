@@ -30,29 +30,32 @@ import (
 	"github.com/kcp-dev/logicalcluster/v3"
 )
 
-var _ cache.Cache = &scopedCache{}
+var _ cache.Cache = &ScopedCache{}
 
-// scopedCache is a Cache that operates on a specific cluster.
-type scopedCache struct {
-	base        WildcardCache
-	clusterName logicalcluster.Name
+// ScopedCache is a Cache that operates on a specific cluster.
+type ScopedCache struct {
+	Base        WildcardCache
+	ClusterName logicalcluster.Name
 }
 
-func (c *scopedCache) Start(ctx context.Context) error {
+// Start starts the cache.
+func (c *ScopedCache) Start(ctx context.Context) error {
 	return errors.New("scoped cache cannot be started")
 }
 
-func (c *scopedCache) WaitForCacheSync(ctx context.Context) bool {
-	return c.base.WaitForCacheSync(ctx)
+// WaitForCacheSync waits for the cache to be synced.
+func (c *ScopedCache) WaitForCacheSync(ctx context.Context) bool {
+	return c.Base.WaitForCacheSync(ctx)
 }
 
-func (c *scopedCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	return c.base.IndexField(ctx, obj, field, extractValue)
+// IndexField indexes a field in the cache.
+func (c *ScopedCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return c.Base.IndexField(ctx, obj, field, extractValue)
 }
 
 // Get returns a single object from the cache.
-func (c *scopedCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	inf, gvk, scope, err := c.base.GetSharedInformer(obj)
+func (c *ScopedCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	inf, gvk, scope, err := c.Base.GetSharedInformer(obj)
 	if err != nil {
 		return fmt.Errorf("failed to get informer for %T %s: %w", obj, obj.GetObjectKind().GroupVersionKind(), err)
 	}
@@ -62,15 +65,15 @@ func (c *scopedCache) Get(ctx context.Context, key client.ObjectKey, obj client.
 		groupVersionKind: gvk,
 		scopeName:        scope,
 		disableDeepCopy:  false,
-		clusterName:      c.clusterName,
+		clusterName:      c.ClusterName,
 	}
 
 	return cr.Get(ctx, key, obj, opts...)
 }
 
 // List returns a list of objects from the cache.
-func (c *scopedCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	inf, gvk, scope, err := c.base.GetSharedInformer(list)
+func (c *ScopedCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	inf, gvk, scope, err := c.Base.GetSharedInformer(list)
 	if err != nil {
 		return fmt.Errorf("failed to get informer for %T %s: %w", list, list.GetObjectKind().GroupVersionKind(), err)
 	}
@@ -80,32 +83,32 @@ func (c *scopedCache) List(ctx context.Context, list client.ObjectList, opts ...
 		groupVersionKind: gvk,
 		scopeName:        scope,
 		disableDeepCopy:  false,
-		clusterName:      c.clusterName,
+		clusterName:      c.ClusterName,
 	}
 
 	return cr.List(ctx, list, opts...)
 }
 
 // GetInformer returns an informer for the given object kind.
-func (c *scopedCache) GetInformer(ctx context.Context, obj client.Object, opts ...cache.InformerGetOption) (cache.Informer, error) {
-	inf, err := c.base.GetInformer(ctx, obj, opts...)
+func (c *ScopedCache) GetInformer(ctx context.Context, obj client.Object, opts ...cache.InformerGetOption) (cache.Informer, error) {
+	inf, err := c.Base.GetInformer(ctx, obj, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return &scopedInformer{clusterName: c.clusterName, Informer: inf}, nil
+	return &scopedInformer{clusterName: c.ClusterName, Informer: inf}, nil
 }
 
 // GetInformerForKind returns an informer for the given GroupVersionKind.
-func (c *scopedCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...cache.InformerGetOption) (cache.Informer, error) {
-	inf, err := c.base.GetInformerForKind(ctx, gvk, opts...)
+func (c *ScopedCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...cache.InformerGetOption) (cache.Informer, error) {
+	inf, err := c.Base.GetInformerForKind(ctx, gvk, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return &scopedInformer{clusterName: c.clusterName, Informer: inf}, nil
+	return &scopedInformer{clusterName: c.ClusterName, Informer: inf}, nil
 }
 
 // RemoveInformer removes an informer from the cache.
-func (c *scopedCache) RemoveInformer(ctx context.Context, obj client.Object) error {
+func (c *ScopedCache) RemoveInformer(ctx context.Context, obj client.Object) error {
 	return errors.New("informer cannot be removed from scoped cache")
 }
 

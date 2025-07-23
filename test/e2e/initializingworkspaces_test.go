@@ -164,10 +164,18 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 							return reconcile.Result{}, err
 						}
 						clusterClient := cl.GetClient()
-
 						lc := &kcpcorev1alpha1.LogicalCluster{}
-						if err := clusterClient.Get(ctx, request.NamespacedName, lc); err != nil {
-							return reconcile.Result{}, err
+						list := &kcpcorev1alpha1.LogicalClusterList{}
+						if err := clusterClient.List(ctx, list); err != nil {
+							return reconcile.Result{}, fmt.Errorf("failed to list LogicalClusters: %w", err)
+						}
+
+						for _, item := range list.Items {
+							clusterName := logicalcluster.From(&item)
+							if string(clusterName) == request.ClusterName {
+								lc = &item
+								break
+							}
 						}
 
 						engaged.Insert(request.ClusterName)

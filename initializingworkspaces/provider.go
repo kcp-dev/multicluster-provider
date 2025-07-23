@@ -42,6 +42,8 @@ import (
 
 	kcpcorev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
+
+	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 )
 
 var _ multicluster.Provider = &Provider{}
@@ -54,6 +56,7 @@ type Provider struct {
 	config          *rest.Config
 	scheme          *runtime.Scheme
 	cache           cache.Cache
+	wildcardCache   mcpcache.WildcardCache
 	object          client.Object
 	initializerName string
 
@@ -69,8 +72,9 @@ type Options struct {
 	// Scheme is the scheme to use for the provider. If this is nil, it defaults
 	// to the client-go scheme.
 	Scheme *runtime.Scheme
-	Cache  cache.Cache
-
+	// WildcardCache is the wildcard cache to use for the provider. If this is
+	// nil, a new wildcard cache will be created for the given rest.Config.
+	WildcardCache mcpcache.WildcardCache
 	// ObjectToWatch is the object type that the provider watches. If this is nil,
 	// it defaults to LogicalCluster.
 	ObjectToWatch client.Object
@@ -90,13 +94,13 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 		}
 	}
 
-	if options.Cache == nil {
+	if options.WildcardCache == nil {
 		var err error
-		options.Cache, err = cache.New(config, cache.Options{
+		options.WildcardCache, err = mcpcache.NewWildcardCache(cfg, cache.Options{
 			Scheme: options.Scheme,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create cache: %w", err)
+			return nil, fmt.Errorf("failed to create wildcard cache: %w", err)
 		}
 	}
 
@@ -111,7 +115,7 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 	return &Provider{
 		config:          config,
 		scheme:          options.Scheme,
-		cache:           options.Cache,
+		wildcardCache:   options.WildcardCache,
 		object:          options.ObjectToWatch,
 		initializerName: options.InitializerName,
 
@@ -125,19 +129,15 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 // Run starts the provider and blocks.
 func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	g, ctx := errgroup.WithContext(ctx)
-	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(true))
+	inf, err := p.wildcardCache.GetInformer(ctx, p.object, cache.BlockUntilSynced(true))
 	if err != nil {
 		return fmt.Errorf("failed to get %T informer: %w", p.object, err)
 	}
 
-	cluster, err := cluster.New(p.config)
-	if err != nil {
-		return fmt.Errorf("failed to create wildcard cluster: %w", err)
-	}
-
 	if _, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			p.handleLogicalClusterEvent(ctx, obj)
+			log.Log.Info("LogicalCluster added", "object", obj.(client.Object).GetUID())
+			p.handleLogicalClusterEvent(ctx, obj, mgr)
 		},
 		DeleteFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
@@ -168,30 +168,19 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 			} else {
 				klog.Errorf("unexpected object type %T, expected LogicalCluster", cobj)
 			}
-
 		},
 	}); err != nil {
 		return fmt.Errorf("failed to add EventHandler: %w", err)
 	}
 
-	g.Go(func() error { return cluster.Start(ctx) })
 	g.Go(func() error {
-		return p.cache.Start(ctx)
+		return p.wildcardCache.Start(ctx)
 	})
-
-	if err := mgr.Engage(ctx, "*", cluster); err != nil {
-		return fmt.Errorf("failed to engage wildcard cluster: %w", err)
-	}
-
-	if !inf.HasSynced() {
-		log.Log.Info("Informer cache not yet synced")
-	}
-	log.Log.Info("Informer cache synced")
 
 	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	if _, err := p.cache.GetInformer(syncCtx, p.object, cache.BlockUntilSynced(true)); err != nil {
+	if _, err := p.wildcardCache.GetInformer(syncCtx, p.object, cache.BlockUntilSynced(true)); err != nil {
 		return fmt.Errorf("failed to sync %T informer: %w", p.object, err)
 	}
 
@@ -199,7 +188,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 }
 
 // handleLogicalClusterEvent processes LogicalCluster events and engages initializing workspaces
-func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any) {
+func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any, mgr mcmanager.Manager) {
 	cobj, ok := obj.(client.Object)
 	if !ok {
 		klog.Errorf("unexpected object type %T", obj)
@@ -215,8 +204,6 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any) {
 	// Check if our initializer is in the initializers list
 	hasInitializer := slices.Contains(lc.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(p.initializerName))
 	clusterName := logicalcluster.From(cobj)
-	p.log.Info("LogicalCluster added", "object", clusterName)
-
 	// If our initializer is not present, we need to disengage the cluster if it exists
 	if !hasInitializer {
 		p.lock.Lock()
@@ -231,28 +218,49 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any) {
 		return
 	}
 
-	// create new specific cluster.
-	ctx, cancel := context.WithCancel(ctx)
+	p.log.Info("LogicalCluster added", "object", clusterName)
+	// fast path: cluster exists already, there is nothing to do.
+	p.lock.RLock()
+	if _, ok := p.Clusters[clusterName]; ok {
+		p.lock.RUnlock()
+		return
+	}
+	p.lock.RUnlock()
 
-	cl, err := p.createSpecificCluster(clusterName, p.scheme)
-	if err != nil {
-		p.log.Error(err, "failed to create cluster", "cluster", clusterName)
-		cancel()
+	// slow path: take write lock to add a new cluster (unless it appeared in the meantime).
+	p.lock.Lock()
+	if _, ok := p.Clusters[clusterName]; ok {
+		p.lock.Unlock()
 		return
 	}
 
-	p.log.Info("starting cluster cache", "cluster", clusterName)
-
-	if err := cl.Start(ctx); err != nil {
-		p.log.Error(err, "failed to start cluster", "cluster", clusterName)
+	// create new specific cluster.
+	ctx, cancel := context.WithCancel(ctx)
+	cl, err := NewSpecificCluster(p.config, clusterName, p.wildcardCache, p.scheme)
+	if err != nil {
+		p.log.Error(err, "failed to create cluster", "cluster", clusterName)
+		cancel()
+		p.lock.Unlock()
+		return
 	}
-	p.log.Info("cluster cache started", "cluster", clusterName)
+	p.Clusters[clusterName] = cl
+	p.cancelFns[clusterName] = cancel
+	p.lock.Unlock()
 
 	_, syncCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer syncCancel()
 
-	p.Clusters[clusterName] = cl
-	p.cancelFns[clusterName] = cancel
+	p.log.Info("engaging cluster", "cluster", clusterName)
+	if err := mgr.Engage(ctx, clusterName.String(), cl); err != nil {
+		p.log.Error(err, "failed to engage cluster", "cluster", clusterName)
+		p.lock.Lock()
+		cancel()
+		if p.Clusters[clusterName] == cl {
+			delete(p.Clusters, clusterName)
+			delete(p.cancelFns, clusterName)
+		}
+		p.lock.Unlock()
+	}
 	p.log.Info("engaged and registered cluster", "cluster", clusterName)
 }
 
