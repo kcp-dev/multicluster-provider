@@ -27,6 +27,7 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/errgroup"
 
+	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -54,6 +55,7 @@ type Provider struct {
 	config          *rest.Config
 	scheme          *runtime.Scheme
 	cache           cache.Cache
+	wildcardCache   mcpcache.WildcardCache
 	object          client.Object
 	initializerName string
 
@@ -68,9 +70,9 @@ type Provider struct {
 type Options struct {
 	// Scheme is the scheme to use for the provider. If this is nil, it defaults
 	// to the client-go scheme.
-	Scheme *runtime.Scheme
-	Cache  cache.Cache
-
+	Scheme        *runtime.Scheme
+	Cache         cache.Cache
+	WildcardCache mcpcache.WildcardCache
 	// ObjectToWatch is the object type that the provider watches. If this is nil,
 	// it defaults to LogicalCluster.
 	ObjectToWatch client.Object
@@ -100,6 +102,16 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 		}
 	}
 
+	if options.WildcardCache == nil {
+		var err error
+		options.WildcardCache, err = mcpcache.NewWildcardCache(cfg, cache.Options{
+			Scheme: options.Scheme,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create wildcard cache: %w", err)
+		}
+	}
+
 	if options.ObjectToWatch == nil {
 		options.ObjectToWatch = &kcpcorev1alpha1.LogicalCluster{}
 	}
@@ -112,6 +124,7 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 		config:          config,
 		scheme:          options.Scheme,
 		cache:           options.Cache,
+		wildcardCache:   options.WildcardCache,
 		object:          options.ObjectToWatch,
 		initializerName: options.InitializerName,
 
@@ -125,7 +138,7 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 // Run starts the provider and blocks.
 func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	g, ctx := errgroup.WithContext(ctx)
-	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(true))
+	inf, err := p.wildcardCache.GetInformer(ctx, p.object, cache.BlockUntilSynced(true))
 	if err != nil {
 		return fmt.Errorf("failed to get %T informer: %w", p.object, err)
 	}
@@ -137,6 +150,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 
 	if _, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
+			log.Log.Info("LogicalCluster added", "object", obj.(client.Object).GetUID())
 			p.handleLogicalClusterEvent(ctx, obj)
 		},
 		DeleteFunc: func(obj any) {
@@ -174,19 +188,21 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 		return fmt.Errorf("failed to add EventHandler: %w", err)
 	}
 
-	g.Go(func() error { return cluster.Start(ctx) })
+	g.Go(func() error {
+		return cluster.Start(ctx)
+	})
+
 	g.Go(func() error {
 		return p.cache.Start(ctx)
+	})
+
+	g.Go(func() error {
+		return p.wildcardCache.Start(ctx)
 	})
 
 	if err := mgr.Engage(ctx, "*", cluster); err != nil {
 		return fmt.Errorf("failed to engage wildcard cluster: %w", err)
 	}
-
-	if !inf.HasSynced() {
-		log.Log.Info("Informer cache not yet synced")
-	}
-	log.Log.Info("Informer cache synced")
 
 	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -215,8 +231,6 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any) {
 	// Check if our initializer is in the initializers list
 	hasInitializer := slices.Contains(lc.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(p.initializerName))
 	clusterName := logicalcluster.From(cobj)
-	p.log.Info("LogicalCluster added", "object", clusterName)
-
 	// If our initializer is not present, we need to disengage the cluster if it exists
 	if !hasInitializer {
 		p.lock.Lock()
@@ -227,6 +241,22 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any) {
 			delete(p.cancelFns, clusterName)
 			delete(p.Clusters, clusterName)
 		}
+		p.lock.Unlock()
+		return
+	}
+
+	p.log.Info("LogicalCluster added", "object", clusterName)
+	// fast path: cluster exists already, there is nothing to do.
+	p.lock.RLock()
+	if _, ok := p.Clusters[clusterName]; ok {
+		p.lock.RUnlock()
+		return
+	}
+	p.lock.RUnlock()
+
+	// slow path: take write lock to add a new cluster (unless it appeared in the meantime).
+	p.lock.Lock()
+	if _, ok := p.Clusters[clusterName]; ok {
 		p.lock.Unlock()
 		return
 	}
@@ -253,6 +283,9 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any) {
 
 	p.Clusters[clusterName] = cl
 	p.cancelFns[clusterName] = cancel
+	p.lock.Unlock()
+	p.log.Info("List of clusters in provider cache", "list", p.Clusters)
+
 	p.log.Info("engaged and registered cluster", "cluster", clusterName)
 }
 

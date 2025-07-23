@@ -26,8 +26,9 @@ import (
 	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
@@ -111,87 +112,91 @@ func main() {
 		).Complete(mcreconcile.Func(
 		func(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
 			log := log.FromContext(ctx).WithValues("cluster", req.ClusterName)
+			var cl cluster.Cluster
 			for name := range provider.Clusters {
-				log.Info("Cluster in provider cache", "name", name)
-			}
-			cl, err := mgr.GetCluster(ctx, req.ClusterName)
-			if err != nil {
-				log.Info("Cluster not found, will retry", "cluster", req.ClusterName, "reason", err.Error())
-				return reconcile.Result{Requeue: true, RequeueAfter: 2 * time.Second}, nil
-			}
-			log.Info("GetCluster success", "cluster", req.ClusterName)
-
-			client := cl.GetClient()
-			log.Info("Cluster client retrieved", "cluster", req.ClusterName)
-
-			lc := &corev1alpha1.LogicalCluster{}
-			if err := client.Get(ctx, req.NamespacedName, lc); err != nil {
-				return reconcile.Result{}, err
-			}
-
-			log.Info("Reconciling LogicalCluster", "name", lc.Name, "LC", lc.Spec)
-			// check if your initializer is still set on the logicalcluster
-			if slices.Contains(lc.Status.Initializers, corev1alpha1.LogicalClusterInitializer(initializerName)) {
-				log.Info("Starting to initialize cluster")
-
-				workspaceName := fmt.Sprintf("initialized-workspace-%s", req.Name)
-				ws := &tenancyv1alpha1.Workspace{}
-				err = client.Get(ctx, ctrlclient.ObjectKey{Name: workspaceName}, ws)
+				log.Info("Cluster in provider cache", "name", req.ClusterName)
+				cl, err = mgr.GetCluster(ctx, string(name))
 				if err != nil {
-					if !apierrors.IsNotFound(err) {
-						log.Error(err, "Error checking for existing workspace")
-						return reconcile.Result{}, err
-					}
-
-					log.Info("Creating child workspace", "name", workspaceName)
-					ws = &tenancyv1alpha1.Workspace{
-						ObjectMeta: ctrl.ObjectMeta{
-							Name: workspaceName,
-						},
-					}
-
-					if err := client.Create(ctx, ws); err != nil {
-						log.Error(err, "Failed to create workspace")
-						return reconcile.Result{Requeue: true}, err
-					}
-					log.Info("Workspace created successfully", "name", workspaceName)
-				} else {
-					log.Info("Found existing workspace", "name", workspaceName, "phase", ws.Status.Phase)
-				}
-
-				if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady {
-					log.Info("Workspace not ready yet", "current-phase", ws.Status.Phase)
-					return reconcile.Result{Requeue: true}, nil
-				}
-				log.Info("Workspace is ready, proceeding to create ConfigMap")
-				s := &corev1.ConfigMap{
-					ObjectMeta: ctrl.ObjectMeta{
-						Name:      "kcp-initializer-cm",
-						Namespace: "default",
-					},
-					Data: map[string]string{
-						"test-data": "example-value",
-					},
-				}
-				log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
-				if err := client.Create(ctx, s); err != nil {
-					return reconcile.Result{}, fmt.Errorf("failed to create configmap: %w", err)
-				}
-				log.Info("ConfigMap created successfully", "name", s.Name, "uuid", s.UID)
-				log.Info("Removing initializer from LogicalCluster status", "name", lc.Name, "uuid", lc.UID)
-				// Remove the initializer from the logical cluster status
-				// so that it won't be processed again.
-				initializerName := corev1alpha1.LogicalClusterInitializer(initializerName)
-				if !slices.Contains(lc.Status.Initializers, initializerName) {
-					log.Info("Initializer already absent, skipping patch")
+					log.Info("Cluster not found, will retry", "cluster", string(name), "reason", err.Error())
 					return reconcile.Result{}, nil
 				}
-				patch := ctrlclient.MergeFrom(lc.DeepCopy())
-				lc.Status.Initializers = initialization.EnsureInitializerAbsent(initializerName, lc.Status.Initializers)
-				if err := client.Status().Patch(ctx, lc, patch); err != nil {
+
+				log.Info("GetCluster success", "cluster", string(name))
+
+				client := cl.GetClient()
+				log.Info("Cluster client retrieved", "cluster", string(name))
+
+				lc := &corev1alpha1.LogicalCluster{}
+				if err := client.Get(ctx, req.NamespacedName, lc); err != nil {
+					if apierrors.IsNotFound(err) {
+						log.Info("LogicalCluster no longer exists. Skipping.")
+						return reconcile.Result{}, nil
+					}
 					return reconcile.Result{}, err
 				}
-				log.Info("Removed initializer from LogicalCluster status", "name", lc.Name, "uuid", lc.UID)
+
+				log.Info("Reconciling LogicalCluster", "name", lc.Name, "LC", lc.Spec)
+				// check if your initializer is still set on the logicalcluster
+				if slices.Contains(lc.Status.Initializers, corev1alpha1.LogicalClusterInitializer(initializerName)) {
+					log.Info("Starting to initialize cluster")
+
+					workspaceName := fmt.Sprintf("initialized-workspace-%s", req.Name)
+					ws := &tenancyv1alpha1.Workspace{}
+					err = client.Get(ctx, ctrlclient.ObjectKey{Name: workspaceName}, ws)
+					if err != nil {
+						if !apierrors.IsNotFound(err) {
+							log.Error(err, "Error checking for existing workspace")
+							return reconcile.Result{}, nil
+						}
+
+						log.Info("Creating child workspace", "name", workspaceName)
+						ws = &tenancyv1alpha1.Workspace{
+							ObjectMeta: ctrl.ObjectMeta{
+								Name: workspaceName,
+							},
+						}
+
+						if err := client.Create(ctx, ws); err != nil {
+							log.Error(err, "Failed to create workspace")
+							return reconcile.Result{Requeue: true, RequeueAfter: 2 * time.Second}, nil
+						}
+						log.Info("Workspace created successfully", "name", workspaceName)
+					}
+
+					if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady {
+						log.Info("Workspace not ready yet", "current-phase", ws.Status.Phase)
+						return reconcile.Result{Requeue: true}, nil
+					}
+					log.Info("Workspace is ready, proceeding to create ConfigMap")
+					s := &corev1.ConfigMap{
+						ObjectMeta: ctrl.ObjectMeta{
+							Name:      "kcp-initializer-cm",
+							Namespace: "default",
+						},
+						Data: map[string]string{
+							"test-data": "example-value",
+						},
+					}
+					log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
+					if err := client.Create(ctx, s); err != nil {
+						return reconcile.Result{}, fmt.Errorf("failed to create configmap: %w", err)
+					}
+					log.Info("ConfigMap created successfully", "name", s.Name, "uuid", s.UID)
+
+					// Remove the initializer from the logical cluster status
+					// so that it won't be processed again.
+					initializerName := corev1alpha1.LogicalClusterInitializer(initializerName)
+					if !slices.Contains(lc.Status.Initializers, initializerName) {
+						log.Info("Initializer already absent, skipping patch")
+						return reconcile.Result{}, nil
+					}
+					patch := ctrlclient.MergeFrom(lc.DeepCopy())
+					lc.Status.Initializers = initialization.EnsureInitializerAbsent(initializerName, lc.Status.Initializers)
+					if err := client.Status().Patch(ctx, lc, patch); err != nil {
+						return reconcile.Result{}, err
+					}
+					log.Info("Removed initializer from LogicalCluster status", "name", lc.Name, "uuid", lc.UID)
+				}
 			}
 			return reconcile.Result{}, err
 		},
@@ -229,10 +234,15 @@ func handleLogicalClusterEvent() mchandler.TypedEventHandlerFunc[ctrlclient.Obje
 			log.Log.Info("Event Handler reconcile request",
 				"cluster", clusterName,
 				"name", clusterID)
-
 			return []mcreconcile.Request{
 				{
 					ClusterName: clusterID,
+					Request: reconcile.Request{
+						NamespacedName: types.NamespacedName{
+							Name:      obj.GetName(),
+							Namespace: obj.GetNamespace(),
+						},
+					},
 				},
 			}
 		})
