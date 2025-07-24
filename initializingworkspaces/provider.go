@@ -27,7 +27,6 @@ import (
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/errgroup"
 
-	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -43,6 +42,8 @@ import (
 
 	kcpcorev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
+
+	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 )
 
 var _ multicluster.Provider = &Provider{}
@@ -167,7 +168,6 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 			} else {
 				klog.Errorf("unexpected object type %T, expected LogicalCluster", cobj)
 			}
-
 		},
 	}); err != nil {
 		return fmt.Errorf("failed to add EventHandler: %w", err)

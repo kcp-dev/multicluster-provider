@@ -24,23 +24,24 @@ import (
 	"net/url"
 	"strings"
 
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
 	"github.com/kcp-dev/logicalcluster/v3"
+
 	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 )
 
-var _ cluster.Cluster = &specificCluster{}
+var _ cluster.Cluster = &SpecificCluster{}
 
-type specificCluster struct {
+// SpecificCluster constructs a new cluster.Cluster that operates on a specific logical cluster.
+type SpecificCluster struct {
 	clusterName logicalcluster.Name
 
 	scheme     *runtime.Scheme
@@ -52,7 +53,7 @@ type specificCluster struct {
 }
 
 // NewSpecificCluster create a cluster with specific URL and uses routed client to access the logical clusters from the wildcard cache.
-func NewSpecificCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme) (*specificCluster, error) {
+func NewSpecificCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme) (*SpecificCluster, error) {
 	cfg = rest.CopyConfig(cfg)
 	host := cfg.Host
 	host = strings.TrimSuffix(host, "/clusters/*")
@@ -69,11 +70,11 @@ func NewSpecificCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildc
 		ClusterName: clusterName,
 	}
 
-	// Create regular client first
 	client, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, err
 	}
+
 	httpClient, err := rest.HTTPClientFor(cfg)
 	if err != nil {
 		return nil, err
@@ -87,7 +88,7 @@ func NewSpecificCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildc
 	// Create routing client that routes LogicalCluster to wildcard cache
 	routedClient := newClient(client, wildcardCA, scheme)
 
-	return &specificCluster{
+	return &SpecificCluster{
 		clusterName: clusterName,
 		config:      cfg,
 		scheme:      scheme,
@@ -99,51 +100,51 @@ func NewSpecificCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildc
 }
 
 // GetHTTPClient returns the HTTP client scoped to the cluster.
-func (c *specificCluster) GetHTTPClient() *http.Client {
+func (c *SpecificCluster) GetHTTPClient() *http.Client {
 	return c.httpClient
 }
 
 // GetConfig returns the rest.Config scoped to the cluster.
-func (c *specificCluster) GetConfig() *rest.Config {
+func (c *SpecificCluster) GetConfig() *rest.Config {
 	return c.config
 }
 
 // GetScheme returns the scheme scoped to the cluster.
-func (c *specificCluster) GetScheme() *runtime.Scheme {
+func (c *SpecificCluster) GetScheme() *runtime.Scheme {
 	return c.scheme
 }
 
 // GetFieldIndexer returns a FieldIndexer scoped to the cluster.
-func (c *specificCluster) GetFieldIndexer() client.FieldIndexer {
+func (c *SpecificCluster) GetFieldIndexer() client.FieldIndexer {
 	return c.cache
 }
 
 // GetRESTMapper returns a RESTMapper scoped to the cluster.
-func (c *specificCluster) GetRESTMapper() meta.RESTMapper {
+func (c *SpecificCluster) GetRESTMapper() meta.RESTMapper {
 	return c.mapper
 }
 
 // GetCache returns a cache.Cache.
-func (c *specificCluster) GetCache() cache.Cache {
+func (c *SpecificCluster) GetCache() cache.Cache {
 	return c.cache
 }
 
 // GetClient returns a client scoped to the namespace.
-func (c *specificCluster) GetClient() client.Client {
+func (c *SpecificCluster) GetClient() client.Client {
 	return c.client
 }
 
 // GetEventRecorderFor returns a new EventRecorder for the provided name.
-func (c *specificCluster) GetEventRecorderFor(name string) record.EventRecorder {
+func (c *SpecificCluster) GetEventRecorderFor(name string) record.EventRecorder {
 	panic("implement me")
 }
 
 // GetAPIReader returns a reader against the cluster.
-func (c *specificCluster) GetAPIReader() client.Reader {
+func (c *SpecificCluster) GetAPIReader() client.Reader {
 	return c.cache
 }
 
 // Start starts the cluster.
-func (c *specificCluster) Start(ctx context.Context) error {
+func (c *SpecificCluster) Start(ctx context.Context) error {
 	return errors.New("specific cluster cannot be started")
 }

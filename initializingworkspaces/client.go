@@ -1,13 +1,30 @@
+/*
+Copyright 2025 The KCP Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package initializingworkspaces
 
 import (
 	"context"
 
-	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 )
 
 var _ client.Client = &Client{}
@@ -78,23 +95,27 @@ func (r *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 	return r.client.List(ctx, list, opts...)
 }
 
-// Create, Update, Patch, Delete always go to scoped client
+// Create always go to scoped client
 func (r *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	return r.client.Create(ctx, obj, opts...)
 }
 
+// Delete always goes to scoped client
 func (r *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
 	return r.client.Delete(ctx, obj, opts...)
 }
 
+// Update always goes to scoped client
 func (r *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	return r.client.Update(ctx, obj, opts...)
 }
 
+// Patch always goes to scoped client
 func (r *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	return r.client.Patch(ctx, obj, patch, opts...)
 }
 
+// DeleteAllOf deletes all objects of the given type matching the given options.
 func (r *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
 	return r.client.DeleteAllOf(ctx, obj, opts...)
 }

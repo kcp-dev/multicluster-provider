@@ -38,14 +38,17 @@ type ScopedCache struct {
 	ClusterName logicalcluster.Name
 }
 
+// Start starts the cache.
 func (c *ScopedCache) Start(ctx context.Context) error {
 	return errors.New("scoped cache cannot be started")
 }
 
+// WaitForCacheSync waits for the cache to be synced.
 func (c *ScopedCache) WaitForCacheSync(ctx context.Context) bool {
 	return c.Base.WaitForCacheSync(ctx)
 }
 
+// IndexField indexes a field in the cache.
 func (c *ScopedCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
 	return c.Base.IndexField(ctx, obj, field, extractValue)
 }
