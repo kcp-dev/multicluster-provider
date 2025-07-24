@@ -85,8 +85,6 @@ type Options struct {
 
 // New creates a new KCP initializing workspaces provider.
 func New(cfg *rest.Config, options Options) (*Provider, error) {
-	config := rest.CopyConfig(cfg)
-	config.Host = strings.TrimSuffix(config.Host, "/") + "/clusters/*"
 	if options.Scheme == nil {
 		options.Scheme = scheme.Scheme
 		if err := kcpcorev1alpha1.AddToScheme(options.Scheme); err != nil {
@@ -113,7 +111,7 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 	}
 
 	return &Provider{
-		config:          config,
+		config:          cfg,
 		scheme:          options.Scheme,
 		wildcardCache:   options.WildcardCache,
 		object:          options.ObjectToWatch,
@@ -234,9 +232,14 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any, mgr m
 		return
 	}
 
-	// create new specific cluster.
+	// create new specific cluster with correct host endpoint for fetching specific logical cluster.
 	ctx, cancel := context.WithCancel(ctx)
-	cl, err := NewSpecificCluster(p.config, clusterName, p.wildcardCache, p.scheme)
+	cfg := rest.CopyConfig(p.config)
+	host := cfg.Host
+	host = strings.TrimSuffix(host, "/clusters/*")
+	cfg.Host = fmt.Sprintf("%s/clusters/%s", host, clusterName)
+
+	cl, err := mcpcache.NewScopedCluster(cfg, clusterName, p.wildcardCache, p.scheme)
 	if err != nil {
 		p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 		cancel()

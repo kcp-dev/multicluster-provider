@@ -29,7 +29,6 @@ import (
 	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
 	"github.com/kcp-dev/kcp/sdk/apis/tenancy/initialization"
 	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
-	"github.com/kcp-dev/logicalcluster/v3"
 	"github.com/kcp-dev/multicluster-provider/initializingworkspaces"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
@@ -111,20 +110,11 @@ func main() {
 				client := cl.GetClient()
 
 				lc := &corev1alpha1.LogicalCluster{}
-				list := &corev1alpha1.LogicalClusterList{}
-				if err := client.List(ctx, list); err != nil {
-					return reconcile.Result{}, fmt.Errorf("failed to list LogicalClusters: %w", err)
+				if err := client.Get(ctx, req.NamespacedName, lc); err != nil {
+					return reconcile.Result{}, fmt.Errorf("failed to get logical cluster: %w", err)
 				}
 
-				for _, item := range list.Items {
-					clusterName := logicalcluster.From(&item)
-					if string(clusterName) == req.ClusterName {
-						lc = &item
-						break
-					}
-				}
-
-				log.Info("Reconciling LogicalCluster", "name", lc.Name, "LC", lc.Spec)
+				log.Info("Reconciling LogicalCluster", "logical cluster", lc.Spec)
 				initializer := corev1alpha1.LogicalClusterInitializer(initializerName)
 				// check if your initializer is still set on the logicalcluster
 				if slices.Contains(lc.Status.Initializers, initializer) {
