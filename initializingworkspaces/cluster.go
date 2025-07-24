@@ -18,10 +18,11 @@ package initializingworkspaces
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
-	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
@@ -29,12 +30,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
 	"github.com/kcp-dev/logicalcluster/v3"
+	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 )
 
 var _ cluster.Cluster = &specificCluster{}
@@ -50,44 +51,50 @@ type specificCluster struct {
 	cache      cache.Cache
 }
 
-// New method to create a cluster with specific URL
-func (p *Provider) createSpecificCluster(clusterName logicalcluster.Name, scheme *runtime.Scheme) (cluster.Cluster, error) {
-	specificConfig := rest.CopyConfig(p.config)
-	host := p.config.Host
+// NewSpecificCluster create a cluster with specific URL and uses routed client to access the logical clusters from the wildcard cache.
+func NewSpecificCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme) (*specificCluster, error) {
+	cfg = rest.CopyConfig(cfg)
+	host := cfg.Host
 	host = strings.TrimSuffix(host, "/clusters/*")
-	specificConfig.Host = fmt.Sprintf("%s/clusters/%s", host, clusterName)
+	cfg.Host = fmt.Sprintf("%s/clusters/%s", host, clusterName)
+	host, err := url.JoinPath(cfg.Host, clusterName.Path().RequestPath())
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct scoped cluster URL: %w", err)
+	}
+	cfg.Host = host
 
-	cli, err := client.New(specificConfig, client.Options{Scheme: scheme})
+	// construct a scoped cache that uses the wildcard cache as base.
+	ca := &mcpcache.ScopedCache{
+		Base:        wildcardCA,
+		ClusterName: clusterName,
+	}
+
+	// Create regular client first
+	client, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, err
+	}
+	httpClient, err := rest.HTTPClientFor(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	httpClient, err := rest.HTTPClientFor(specificConfig)
+	mapper, err := apiutil.NewDynamicRESTMapper(cfg, httpClient)
 	if err != nil {
 		return nil, err
 	}
 
-	mapper, err := apiutil.NewDynamicRESTMapper(specificConfig, httpClient)
-	if err != nil {
-		return nil, err
-	}
-
-	specificCache, err := cache.New(specificConfig, cache.Options{
-		Scheme: scheme,
-		Mapper: mapper,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cache: %w", err)
-	}
+	// Create routing client that routes LogicalCluster to wildcard cache
+	routedClient := newClient(client, wildcardCA, scheme)
 
 	return &specificCluster{
 		clusterName: clusterName,
-		config:      specificConfig,
+		config:      cfg,
 		scheme:      scheme,
-		client:      cli,
+		client:      routedClient,
 		httpClient:  httpClient,
 		mapper:      mapper,
-		cache:       specificCache,
+		cache:       ca,
 	}, nil
 }
 
@@ -138,19 +145,5 @@ func (c *specificCluster) GetAPIReader() client.Reader {
 
 // Start starts the cluster.
 func (c *specificCluster) Start(ctx context.Context) error {
-	go func() {
-		if err := c.cache.Start(ctx); err != nil {
-			klog.Errorf("Failed to start cache for cluster %s: %v", c.clusterName, err)
-		}
-	}()
-
-	// Wait for cache to sync
-	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	if !c.cache.WaitForCacheSync(syncCtx) {
-		return fmt.Errorf("failed to sync cache for cluster %s", c.clusterName)
-	}
-
-	return nil
+	return errors.New("specific cluster cannot be started")
 }

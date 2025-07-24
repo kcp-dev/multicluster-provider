@@ -43,3 +43,12 @@ spec:
   type:
     name: examples-initializingworkspaces-multicluster
     path: root
+---
+apiVersion: tenancy.kcp.io/v1alpha1
+kind: Workspace
+metadata:
+  name: example3
+spec:
+  type:
+    name: examples-initializingworkspaces-multicluster
+    path: root
