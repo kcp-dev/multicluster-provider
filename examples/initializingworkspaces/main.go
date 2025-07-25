@@ -25,6 +25,7 @@ import (
 	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
 	"github.com/kcp-dev/kcp/sdk/apis/tenancy/initialization"
@@ -108,7 +109,6 @@ func main() {
 					return reconcile.Result{}, fmt.Errorf("failed to get cluster: %w", err)
 				}
 				client := cl.GetClient()
-
 				lc := &corev1alpha1.LogicalCluster{}
 				if err := client.Get(ctx, req.NamespacedName, lc); err != nil {
 					return reconcile.Result{}, fmt.Errorf("failed to get logical cluster: %w", err)
@@ -120,19 +120,33 @@ func main() {
 				if slices.Contains(lc.Status.Initializers, initializer) {
 					log.Info("Starting to initialize cluster")
 					workspaceName := fmt.Sprintf("initialized-workspace-%s", req.ClusterName)
+					ws := &tenancyv1alpha1.Workspace{}
+					err = client.Get(ctx, ctrlclient.ObjectKey{Name: workspaceName}, ws)
+					if err != nil {
+						if !apierrors.IsNotFound(err) {
+							log.Error(err, "Error checking for existing workspace")
+							return reconcile.Result{}, nil
+						}
 
-					log.Info("Creating child workspace", "name", workspaceName)
-					ws := &tenancyv1alpha1.Workspace{
-						ObjectMeta: ctrl.ObjectMeta{
-							Name: workspaceName,
-						},
+						log.Info("Creating child workspace", "name", workspaceName)
+						ws = &tenancyv1alpha1.Workspace{
+							ObjectMeta: ctrl.ObjectMeta{
+								Name: workspaceName,
+							},
+						}
+
+						if err := client.Create(ctx, ws); err != nil {
+							log.Error(err, "Failed to create workspace")
+							return reconcile.Result{}, nil
+						}
+						log.Info("Workspace created successfully", "name", workspaceName)
 					}
 
-					if err := client.Create(ctx, ws); err != nil {
-						log.Error(err, "Failed to create workspace")
-						return reconcile.Result{}, fmt.Errorf("failed to create workspace: %w", err)
+					if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady {
+						log.Info("Workspace not ready yet", "current-phase", ws.Status.Phase)
+						return reconcile.Result{Requeue: true}, nil
 					}
-					log.Info("Workspace created successfully", "name", workspaceName)
+					log.Info("Workspace is ready, proceeding to create ConfigMap")
 
 					s := &corev1.ConfigMap{
 						ObjectMeta: ctrl.ObjectMeta{

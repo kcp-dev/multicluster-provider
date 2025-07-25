@@ -134,8 +134,10 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 
 	if _, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			log.Log.Info("LogicalCluster added", "object", obj.(client.Object).GetUID())
 			p.handleLogicalClusterEvent(ctx, obj, mgr)
+		},
+		UpdateFunc: func(_, newObj any) {
+			p.handleLogicalClusterEvent(ctx, newObj, mgr)
 		},
 		DeleteFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
@@ -239,7 +241,7 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any, mgr m
 	host = strings.TrimSuffix(host, "/clusters/*")
 	cfg.Host = fmt.Sprintf("%s/clusters/%s", host, clusterName)
 
-	cl, err := mcpcache.NewScopedCluster(cfg, clusterName, p.wildcardCache, p.scheme)
+	cl, err := mcpcache.NewScopedInitializingCluster(cfg, clusterName, p.wildcardCache, p.scheme)
 	if err != nil {
 		p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 		cancel()

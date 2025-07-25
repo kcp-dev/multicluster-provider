@@ -76,6 +76,48 @@ func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 	}, nil
 }
 
+// NewScopedInitializingCluster constructs a new cluster.Cluster that operates on a specific logical cluster
+// for initializing workspaces. It doesn't construct client to read from wildcard cache.
+func NewScopedInitializingCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme) (*ScopedCluster, error) {
+	cfg = rest.CopyConfig(cfg)
+	host, err := url.JoinPath(cfg.Host, clusterName.Path().RequestPath())
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct scoped cluster URL: %w", err)
+	}
+	cfg.Host = host
+
+	// construct a scoped cache that uses the wildcard cache as base.
+	ca := &ScopedCache{
+		Base:        wildcardCA,
+		ClusterName: clusterName,
+	}
+
+	cli, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	mapper, err := apiutil.NewDynamicRESTMapper(cfg, httpClient)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ScopedCluster{
+		clusterName: clusterName,
+		config:      cfg,
+		scheme:      scheme,
+		client:      cli,
+		httpClient:  httpClient,
+		mapper:      mapper,
+		cache:       ca,
+	}, nil
+}
+
 var _ cluster.Cluster = &ScopedCluster{}
 
 // ScopedCluster is a cluster that operates on a specific namespace.
