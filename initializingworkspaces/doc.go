@@ -16,7 +16,7 @@ limitations under the License.
 
 /*
 Package initializingworkspaces provides a [sigs.k8s.io/multicluster-runtime] provider implementation for interacting with
-initizializing virtual workspace exposed by a [kcp] instance. This provider can be used for writing controllers
+initializing virtual workspace exposed by a [kcp] instance. This provider can be used for writing controllers
 that reconcile Workspaces in the Initializing phase.
 
 [kcp]: https://kcp.io

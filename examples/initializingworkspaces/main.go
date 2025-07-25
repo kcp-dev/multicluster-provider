@@ -22,29 +22,32 @@ import (
 	"os"
 	"slices"
 
-	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
 
-	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
-	"github.com/kcp-dev/kcp/sdk/apis/tenancy/initialization"
-	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
-	"github.com/kcp-dev/multicluster-provider/initializingworkspaces"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
-	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
-
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
+
+	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
+	"github.com/kcp-dev/kcp/sdk/apis/tenancy/initialization"
+	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+
+	"github.com/kcp-dev/multicluster-provider/initializingworkspaces"
 )
 
 func init() {
@@ -108,7 +111,6 @@ func main() {
 					return reconcile.Result{}, fmt.Errorf("failed to get cluster: %w", err)
 				}
 				client := cl.GetClient()
-
 				lc := &corev1alpha1.LogicalCluster{}
 				if err := client.Get(ctx, req.NamespacedName, lc); err != nil {
 					return reconcile.Result{}, fmt.Errorf("failed to get logical cluster: %w", err)
@@ -120,19 +122,33 @@ func main() {
 				if slices.Contains(lc.Status.Initializers, initializer) {
 					log.Info("Starting to initialize cluster")
 					workspaceName := fmt.Sprintf("initialized-workspace-%s", req.ClusterName)
+					ws := &tenancyv1alpha1.Workspace{}
+					err = client.Get(ctx, ctrlclient.ObjectKey{Name: workspaceName}, ws)
+					if err != nil {
+						if !apierrors.IsNotFound(err) {
+							log.Error(err, "Error checking for existing workspace")
+							return reconcile.Result{}, nil
+						}
 
-					log.Info("Creating child workspace", "name", workspaceName)
-					ws := &tenancyv1alpha1.Workspace{
-						ObjectMeta: ctrl.ObjectMeta{
-							Name: workspaceName,
-						},
+						log.Info("Creating child workspace", "name", workspaceName)
+						ws = &tenancyv1alpha1.Workspace{
+							ObjectMeta: ctrl.ObjectMeta{
+								Name: workspaceName,
+							},
+						}
+
+						if err := client.Create(ctx, ws); err != nil {
+							log.Error(err, "Failed to create workspace")
+							return reconcile.Result{}, nil
+						}
+						log.Info("Workspace created successfully", "name", workspaceName)
 					}
 
-					if err := client.Create(ctx, ws); err != nil {
-						log.Error(err, "Failed to create workspace")
-						return reconcile.Result{}, fmt.Errorf("failed to create workspace: %w", err)
+					if ws.Status.Phase != corev1alpha1.LogicalClusterPhaseReady {
+						log.Info("Workspace not ready yet", "current-phase", ws.Status.Phase)
+						return reconcile.Result{Requeue: true}, nil
 					}
-					log.Info("Workspace created successfully", "name", workspaceName)
+					log.Info("Workspace is ready, proceeding to create ConfigMap")
 
 					s := &corev1.ConfigMap{
 						ObjectMeta: ctrl.ObjectMeta{
@@ -148,7 +164,6 @@ func main() {
 						return reconcile.Result{}, fmt.Errorf("failed to create configmap: %w", err)
 					}
 					log.Info("ConfigMap created successfully", "name", s.Name, "uuid", s.UID)
-
 				}
 				// Remove the initializer from the logical cluster status
 				// so that it won't be processed again.

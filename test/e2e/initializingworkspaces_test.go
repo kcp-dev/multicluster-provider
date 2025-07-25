@@ -163,19 +163,11 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 						if err != nil {
 							return reconcile.Result{}, err
 						}
+
 						clusterClient := cl.GetClient()
 						lc := &kcpcorev1alpha1.LogicalCluster{}
-						list := &kcpcorev1alpha1.LogicalClusterList{}
-						if err := clusterClient.List(ctx, list); err != nil {
-							return reconcile.Result{}, fmt.Errorf("failed to list LogicalClusters: %w", err)
-						}
-
-						for _, item := range list.Items {
-							clusterName := logicalcluster.From(&item)
-							if string(clusterName) == request.ClusterName {
-								lc = &item
-								break
-							}
+						if err := clusterClient.Get(ctx, request.NamespacedName, lc); err != nil {
+							return reconcile.Result{}, fmt.Errorf("failed to get logical cluster: %w", err)
 						}
 
 						engaged.Insert(request.ClusterName)
@@ -214,9 +206,6 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				return engaged.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
-
-			fmt.Println("Engaged clusters:", engaged.List())
-			fmt.Println("Workspace 2:", ws2.Spec.Cluster)
 		})
 
 		It("removes initializers from the both clusters after engaging", func() {
