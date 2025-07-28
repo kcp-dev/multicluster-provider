@@ -35,7 +35,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
@@ -117,7 +116,7 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 }
 
 // Run starts the provider and blocks.
-func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
+func (p *Provider) Run(ctx context.Context, aware multicluster.Aware) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	// Watch logical clusters and engage them as clusters in multicluster-runtime.
@@ -167,7 +166,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 			p.lock.Unlock()
 
 			p.log.Info("engaging cluster", "cluster", clusterName)
-			if err := mgr.Engage(clusterCtx, clusterName.String(), cl); err != nil {
+			if err := aware.Engage(clusterCtx, clusterName.String(), cl); err != nil {
 				p.log.Error(err, "failed to engage cluster", "cluster", clusterName)
 				p.lock.Lock()
 				cancel()
