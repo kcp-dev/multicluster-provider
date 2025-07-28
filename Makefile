@@ -16,6 +16,7 @@ export CGO_ENABLED ?= 0
 export GOFLAGS ?= -mod=readonly -trimpath
 export GO111MODULE = on
 CMD ?= $(filter-out OWNERS, $(notdir $(wildcard ./cmd/*)))
+ROOT_DIR=$(abspath .)
 GOBUILDFLAGS ?= -v
 GIT_HEAD ?= $(shell git log -1 --format=%H)
 GIT_VERSION = $(shell git describe --tags --always)
@@ -28,8 +29,7 @@ GOOS ?= $(shell go env GOOS)
 all: test
 
 GOLANGCI_LINT = _tools/golangci-lint
-GOLANGCI_LINT_VERSION = 1.64.2
-
+GOLANGCI_LINT_VERSION = 2.3.0
 .PHONY: $(GOLANGCI_LINT)
 $(GOLANGCI_LINT):
 	@hack/download-tool.sh \
@@ -92,14 +92,18 @@ lint: $(GOLANGCI_LINT)
 		--print-resources-usage \
 		./...
 
+fix-lint: $(GOLANGCI_LINT)
+	GOLANGCI_LINT_FLAGS="--fix" $(MAKE) lint
+.PHONY: fix-lint
+
 .PHONY: imports
 imports: WHAT ?=
 imports: $(GOLANGCI_LINT)
 	@if [ -n "$(WHAT)" ]; then \
-	  $(GOLANGCI_LINT) run --enable-only=gci --fix --fast $(WHAT); \
+	  $(GOLANGCI_LINT) fmt --enable gci -c $(ROOT_DIR)/.golangci.yaml $(WHAT); \
 	else \
 	  for MOD in . $$(git ls-files '**/go.mod' | sed 's,/go.mod,,'); do \
-		(cd $$MOD; $(GOLANGCI_LINT) run --enable-only=gci --fix --fast); \
+		(cd $$MOD; $(GOLANGCI_LINT) fmt --enable gci -c $(ROOT_DIR)/.golangci.yaml);\
 	  done; \
 	fi
 
