@@ -64,6 +64,11 @@ func newScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 		return nil, err
 	}
 
+	recorder, err := createEventBroadcaster(cfg, "default")
+	if err != nil {
+		return nil, err
+	}
+
 	return &scopedCluster{
 		clusterName: clusterName,
 		config:      cfg,
@@ -72,6 +77,7 @@ func newScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 		httpClient:  httpClient,
 		mapper:      mapper,
 		cache:       ca,
+		recorder:    recorder,
 	}, nil
 }
 
@@ -87,6 +93,7 @@ type scopedCluster struct {
 	client     client.Client
 	mapper     meta.RESTMapper
 	cache      cache.Cache
+	recorder   record.EventRecorder
 }
 
 func (c *scopedCluster) GetHTTPClient() *http.Client {
@@ -121,7 +128,7 @@ func (c *scopedCluster) GetClient() client.Client {
 
 // GetEventRecorderFor returns a new EventRecorder for the provided name.
 func (c *scopedCluster) GetEventRecorderFor(name string) record.EventRecorder {
-	panic("implement me")
+	return c.recorder
 }
 
 // GetAPIReader returns a reader against the cluster.

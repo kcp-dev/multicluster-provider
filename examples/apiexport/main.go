@@ -115,6 +115,8 @@ func main() {
 				}
 
 				log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
+				recorder := cl.GetEventRecorderFor("test")
+				recorder.Eventf(s, corev1.EventTypeNormal, "ConfigMap Reconciled", "ConfigMap %s reconciled", s.Name)
 
 				return reconcile.Result{}, nil
 			},
