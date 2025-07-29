@@ -22,6 +22,9 @@ spec:
   - all: true
     group: ""
     resource: configmaps
+  - all: true
+    group: ""
+    resource: events
 ---
 apiVersion: tenancy.kcp.io/v1alpha1
 kind: WorkspaceType

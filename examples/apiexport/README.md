@@ -1,6 +1,6 @@
 # `apiexport` Example Controller
 
-This folder contains an example controller for the `virtualworkspace` provider implementation. It reconciles `ConfigMap` objects across kcp workspaces.
+This folder contains an example controller for the `virtualworkspace` provider implementation. It reconciles `ConfigMap` and `Event` objects across kcp workspaces.
 
 It can be tested by applying the necessary manifests from the respective folder while connected to the `root` workspace of a kcp instance:
 
@@ -16,7 +16,7 @@ workspace.tenancy.kcp.io/example3 created
 Then, start the example controller by passing the virtual workspace URL to it:
 
 ```sh
-$ go run . --server=$(kubectl get apiexport examples-apiexport-multicluster -o jsonpath="{.status.virtualWorkspaces[0].url}")
+$ go run . --server=$(kubectl get apiexportendpointslice examples-apiexport-multicluster -o jsonpath="{.status.endpoints[0].url}")
 ```
 
 Observe the controller reconciling the `kube-root-ca.crt` ConfigMap created in each workspace:
