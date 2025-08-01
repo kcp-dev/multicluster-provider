@@ -214,9 +214,6 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				return engaged.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
-
-			fmt.Println("Engaged clusters:", engaged.List())
-			fmt.Println("Workspace 2:", ws2.Spec.Cluster)
 		})
 
 		It("removes initializers from the both clusters after engaging", func() {

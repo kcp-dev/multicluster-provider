@@ -45,9 +45,9 @@ func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 	cfg.Host = host
 
 	// construct a scoped cache that uses the wildcard cache as base.
-	ca := &ScopedCache{
-		Base:        wildcardCA,
-		ClusterName: clusterName,
+	ca := &scopedCache{
+		base:        wildcardCA,
+		clusterName: clusterName,
 	}
 
 	cli, err := client.New(cfg, client.Options{Cache: &client.CacheOptions{Reader: ca}, Scheme: scheme})
@@ -87,9 +87,9 @@ func NewScopedInitializingCluster(cfg *rest.Config, clusterName logicalcluster.N
 	cfg.Host = host
 
 	// construct a scoped cache that uses the wildcard cache as base.
-	ca := &ScopedCache{
-		Base:        wildcardCA,
-		ClusterName: clusterName,
+	ca := &scopedCache{
+		base:        wildcardCA,
+		clusterName: clusterName,
 	}
 
 	cli, err := client.New(cfg, client.Options{Scheme: scheme})
