@@ -55,7 +55,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("VirtualWorkspace Provider", Ordered, func() {
+var _ = Describe("APIExport Provider", Ordered, func() {
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
