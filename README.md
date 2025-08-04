@@ -8,11 +8,12 @@ This repository is expected to contain multiple [`Provider`](https://github.com/
 
 Currently available are:
 
-- [apiexport](./apiexport/): for interacting with the [`APIExport` virtual workspace](https://docs.kcp.io/kcp/latest/concepts/apis/exporting-apis/#build-your-controller) (or virtual workspaces with the same semantics).
+- [apiexport](https://pkg.go.dev/github.com/kcp-dev/multicluster-provider/apiexport): for interacting with the [`APIExport` virtual workspace](https://docs.kcp.io/kcp/latest/concepts/apis/exporting-apis/#build-your-controller) (or virtual workspaces with the same semantics).
+- [initializingworkspaces](https://pkg.go.dev/github.com/kcp-dev/multicluster-provider/initializingworkspaces): for interacting with logical clusters that are currently being [initialized](https://docs.kcp.io/kcp/latest/concepts/workspaces/workspace-initialization/) and wait for an initializer created by a `WorkspaceType` to be removed.
 
 ## Examples
 
-See [examples/apiexport](./examples/apiexport) for sample code.
+See [examples](./examples/) for sample code. All providers in this repository come with an example.
 
 ## Contributing
 
