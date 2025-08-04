@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/spf13/pflag"
@@ -138,10 +137,4 @@ func main() {
 		entryLog.Error(err, "unable to run manager")
 		os.Exit(1)
 	}
-}
-
-type RoundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (f RoundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
-	return f(r)
 }
