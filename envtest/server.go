@@ -124,21 +124,22 @@ type Environment struct {
 
 	// UseExistingCluster indicates that this environments should use an
 	// existing kubeconfig, instead of trying to stand up a new kcp.
+	// It defaults to the USE_EXISTING_KCP environment variable if unspecified.
 	UseExistingKcp *bool
 
 	// KcpStartTimeout is the maximum duration each kcp component
 	// may take to start. It defaults to the TEST_KCP_START_TIMEOUT
-	// environment variable or 20 seconds if unspecified
+	// environment variable or 20 seconds if unspecified.
 	KcpStartTimeout time.Duration
 
 	// KcpStopTimeout is the maximum duration each kcp component
 	// may take to stop. It defaults to the TEST_KCP_STOP_TIMEOUT
-	// environment variable or 20 seconds if unspecified
+	// environment variable or 20 seconds if unspecified.
 	KcpStopTimeout time.Duration
 
 	// AttachKcpOutput indicates if kcp output will be attached to os.Stdout and os.Stderr.
 	// Enable this to get more visibility of the testing kcp.
-	// It respect TEST_ATTACH_KCP_OUTPUT environment variable.
+	// It respects the the TEST_ATTACH_KCP_OUTPUT environment variable.
 	AttachKcpOutput bool
 }
 
@@ -166,6 +167,10 @@ func (te *Environment) Start() (*rest.Config, error) {
 			te.Config, err = config.GetConfig()
 			if err != nil {
 				return nil, fmt.Errorf("unable to get configuration for existing cluster: %w", err)
+			}
+
+			if strings.Contains(te.Config.Host, "/clusters/") {
+				return nil, fmt.Errorf("'%s' contains /clusters/ but should point to base context", te.Config.Host)
 			}
 		}
 	} else {
