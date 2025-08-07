@@ -40,10 +40,9 @@ type EventBroadcasterProducer func() (caster record.EventBroadcaster, stopWithPr
 type Provider struct {
 	lock sync.RWMutex
 
-	// scheme to specify when creating a recorder
-	scheme     *runtime.Scheme
-	baseConfig *rest.Config
 	httpClient *http.Client
+	// scheme to specify when creating a recorder
+	scheme *runtime.Scheme
 	// logger is the logger to use when logging diagnostic event info
 	logger          logr.Logger
 	makeBroadcaster EventBroadcasterProducer
@@ -110,7 +109,7 @@ func (p *Provider) getBroadcaster(cfg *rest.Config, clusterName string) (record.
 	}
 
 	if _, ok := p.broadcasters[clusterName]; !ok {
-		corev1Client, err := corev1client.NewForConfig(cfg)
+		corev1Client, err := corev1client.NewForConfigAndClient(cfg, p.httpClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to init core v1 client for event broadcaster: %w", err)
 		}
@@ -140,12 +139,12 @@ func (p *Provider) StopBroadcaster(clusterName string) error {
 }
 
 // NewProvider create a new Provider instance.
-func NewProvider(baseConfig *rest.Config, httpClient *http.Client, scheme *runtime.Scheme, logger logr.Logger, makeBroadcaster EventBroadcasterProducer) (*Provider, error) {
+func NewProvider(httpClient *http.Client, scheme *runtime.Scheme, logger logr.Logger, makeBroadcaster EventBroadcasterProducer) (*Provider, error) {
 	if httpClient == nil {
 		panic("httpClient must not be nil")
 	}
 
-	p := &Provider{scheme: scheme, logger: logger, makeBroadcaster: makeBroadcaster, baseConfig: baseConfig, httpClient: httpClient}
+	p := &Provider{scheme: scheme, logger: logger, makeBroadcaster: makeBroadcaster, httpClient: httpClient}
 	return p, nil
 }
 
