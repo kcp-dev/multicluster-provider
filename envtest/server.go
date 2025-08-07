@@ -42,6 +42,7 @@ var log = ctrllog.Log.WithName("envtest")
 /*
 It's possible to override some defaults, by setting the following environment variables:
 * USE_EXISTING_KCP (boolean): if set to true, envtest will use an existing kcp.
+* EXISTING_KCP_CONTEXT (string): if USE_EXISTING_KCP is set, this is the context loaded from the kubeconfig for connecting to the existing kcp.
 * TEST_ASSET_KCP (string): path to the kcp binary to use
 * TEST_KCP_ASSETS (string): directory containing the binaries to use (kcp). Defaults to /usr/local/kcp/bin.
 * TEST_KCP_START_TIMEOUT (string supported by time.ParseDuration): timeout for test kcp to start. Defaults to 1m.
@@ -50,6 +51,7 @@ It's possible to override some defaults, by setting the following environment va
 */
 const (
 	envUseExistingCluster = "USE_EXISTING_KCP"
+	envExistingKcpContext = "EXISTING_KCP_CONTEXT"
 	envAttachOutput       = "TEST_ATTACH_KCP_OUTPUT"
 	envStartTimeout       = "TEST_KCP_START_TIMEOUT"
 	envStopTimeout        = "TEST_KCP_STOP_TIMEOUT"
@@ -127,6 +129,12 @@ type Environment struct {
 	// It defaults to the USE_EXISTING_KCP environment variable if unspecified.
 	UseExistingKcp *bool
 
+	// ExistingKcpContext indicates that when UseExistingKcp is set to true,
+	// a specific context should be loaded from a kubeconfig instead of the
+	// current one. It defaults to the EXISTING_KCP_CONTEXT environment variable
+	// if unspecified.
+	ExistingKcpContext string
+
 	// KcpStartTimeout is the maximum duration each kcp component
 	// may take to start. It defaults to the TEST_KCP_START_TIMEOUT
 	// environment variable or 20 seconds if unspecified.
@@ -163,8 +171,15 @@ func (te *Environment) Start() (*rest.Config, error) {
 			// only load a config if it hasn't already been set.
 			log.V(1).Info("automatically acquiring client configuration")
 
+			kubeContext := te.ExistingKcpContext
+			if kubeContext == "" {
+				// if the env variable doesn't exist this is empty string, which is fine,
+				// because that is the currently active context.
+				kubeContext = os.Getenv(envExistingKcpContext)
+			}
+
 			var err error
-			te.Config, err = config.GetConfig()
+			te.Config, err = config.GetConfigWithContext(kubeContext)
 			if err != nil {
 				return nil, fmt.Errorf("unable to get configuration for existing cluster: %w", err)
 			}
