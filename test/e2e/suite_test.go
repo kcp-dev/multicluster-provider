@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -51,6 +52,7 @@ func init() {
 	runtime.Must(corev1alpha1.AddToScheme(scheme.Scheme))
 	runtime.Must(tenancyv1alpha1.AddToScheme(scheme.Scheme))
 	runtime.Must(topologyv1alpha1.AddToScheme(scheme.Scheme))
+	runtime.Must(eventsv1.AddToScheme(scheme.Scheme))
 }
 
 func TestE2e(t *testing.T) {

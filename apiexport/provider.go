@@ -19,7 +19,6 @@ package apiexport
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
@@ -117,10 +116,17 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 	}
 
 	if options.makeBroadcaster == nil {
-		options.makeBroadcaster = makeBroadaster
+		options.makeBroadcaster = func() (record.EventBroadcaster, bool) {
+			return record.NewBroadcaster(), true
+		}
 	}
 
-	recorderProvider, err := mcrecorder.NewProvider(cfg, http.DefaultClient, options.Scheme, log.Log.WithName("event-broadcaster"), options.makeBroadcaster)
+	eventClient, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP client for events: %w", err)
+	}
+
+	recorderProvider, err := mcrecorder.NewProvider(eventClient, options.Scheme, logr.Discard(), options.makeBroadcaster)
 	if err != nil {
 		return nil, err
 	}
@@ -138,10 +144,6 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 
 		recorderProvider: recorderProvider,
 	}, nil
-}
-
-func makeBroadaster() (record.EventBroadcaster, bool) {
-	return record.NewBroadcaster(), true
 }
 
 // Run starts the provider and blocks.
