@@ -51,17 +51,18 @@ import (
 )
 
 var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
-	const initName = "root:e2e-test-ws-type"
 	const workspaceTypeName = "e2e-test-ws-type"
 
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
 
-		cli              clusterclient.ClusterClient
-		ws1Path, ws2Path logicalcluster.Path
-		ws1, ws2         *tenancyv1alpha1.Workspace
-		mgr              mcmanager.Manager
+		initName string
+
+		cli                           clusterclient.ClusterClient
+		clusterPath, ws1Path, ws2Path logicalcluster.Path
+		ws1, ws2                      *tenancyv1alpha1.Workspace
+		mgr                           mcmanager.Manager
 	)
 
 	BeforeAll(func() {
@@ -70,6 +71,10 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 		var err error
 		cli, err = clusterclient.New(kcpConfig, client.Options{})
 		Expect(err).NotTo(HaveOccurred())
+
+		var ws *tenancyv1alpha1.Workspace
+		ws, clusterPath = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("initializers"))
+		initName = fmt.Sprintf("%s:%s", ws.Spec.Cluster, workspaceTypeName)
 
 		// Create test workspaces with the WorkspaceType that has our initializer
 		By("creating WorkspaceType with initializer")
@@ -81,13 +86,13 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 				Initializer: true,
 			},
 		}
-		err = cli.Cluster(core.RootCluster.Path()).Create(ctx, workspaceType)
+		err = cli.Cluster(clusterPath).Create(ctx, workspaceType)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Wait for the WorkspaceType to be ready
 		envtest.Eventually(GinkgoT(), func() (bool, string) {
 			wt := &tenancyv1alpha1.WorkspaceType{}
-			err := cli.Cluster(core.RootCluster.Path()).Get(ctx, client.ObjectKey{Name: workspaceTypeName}, wt)
+			err := cli.Cluster(clusterPath).Get(ctx, client.ObjectKey{Name: workspaceTypeName}, wt)
 			if err != nil {
 				return false, fmt.Sprintf("failed to get WorkspaceType: %v", err)
 			}
@@ -95,13 +100,13 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to wait for WorkspaceType to be ready")
 
 		By("creating Workspaces with the WorkspaceType with initializers")
-		ws1, ws1Path = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(),
+		ws1, ws1Path = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, clusterPath,
 			envtest.WithNamePrefix("init-ws1"),
-			envtest.WithType(core.RootCluster.Path(), tenancyv1alpha1.WorkspaceTypeName(workspaceTypeName)))
+			envtest.WithType(clusterPath, tenancyv1alpha1.WorkspaceTypeName(workspaceTypeName)))
 
-		ws2, ws2Path = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(),
+		ws2, ws2Path = envtest.NewInitializingWorkspaceFixture(GinkgoT(), cli, clusterPath,
 			envtest.WithNamePrefix("init-ws2"),
-			envtest.WithType(core.RootCluster.Path(), tenancyv1alpha1.WorkspaceTypeName(workspaceTypeName)))
+			envtest.WithType(clusterPath, tenancyv1alpha1.WorkspaceTypeName(workspaceTypeName)))
 	})
 
 	It("sees both clusters with initializers", func() {
@@ -135,7 +140,7 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 
 			// Get the initializing workspaces virtual workspace URL
 			wt := &tenancyv1alpha1.WorkspaceType{}
-			err = cli.Cluster(core.RootCluster.Path()).Get(ctx, client.ObjectKey{Name: workspaceTypeName}, wt)
+			err = cli.Cluster(clusterPath).Get(ctx, client.ObjectKey{Name: workspaceTypeName}, wt)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(wt.Status.VirtualWorkspaces).ToNot(BeEmpty())
 
