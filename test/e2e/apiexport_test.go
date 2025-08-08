@@ -43,6 +43,7 @@ import (
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+	apisv1alpha2 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha2"
 	"github.com/kcp-dev/kcp/sdk/apis/core"
 	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
@@ -106,40 +107,27 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By(fmt.Sprintf("creating an APIExport in the provider workspace %q", provider))
-		export := &apisv1alpha1.APIExport{
+		export := &apisv1alpha2.APIExport{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "example.com",
 			},
-			Spec: apisv1alpha1.APIExportSpec{
-				LatestResourceSchemas: []string{schema.Name},
+			Spec: apisv1alpha2.APIExportSpec{
+				Resources: []apisv1alpha2.ResourceSchema{
+					{Name: "things", Group: "example.com", Schema: schema.Name, Storage: apisv1alpha2.ResourceSchemaStorage{CRD: &apisv1alpha2.ResourceSchemaStorageCRD{}}},
+				},
 			},
 		}
 		err = cli.Cluster(provider).Create(ctx, export)
 		Expect(err).NotTo(HaveOccurred())
 
-		By(fmt.Sprintf("creating an APIExportEndpointSlice in the provider workspace %q", provider))
-		endpoitns := &apisv1alpha1.APIExportEndpointSlice{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "example.com",
-			},
-			Spec: apisv1alpha1.APIExportEndpointSliceSpec{
-				APIExport: apisv1alpha1.ExportBindingReference{
-					Path: provider.String(),
-					Name: export.Name,
-				},
-			},
-		}
-		err = cli.Cluster(provider).Create(ctx, endpoitns)
-		Expect(err).NotTo(HaveOccurred())
-
 		By(fmt.Sprintf("creating an APIBinding in the other workspace %q", other))
-		binding := &apisv1alpha1.APIBinding{
+		binding := &apisv1alpha2.APIBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "example.com",
 			},
-			Spec: apisv1alpha1.APIBindingSpec{
-				Reference: apisv1alpha1.BindingReference{
-					Export: &apisv1alpha1.ExportBindingReference{
+			Spec: apisv1alpha2.APIBindingSpec{
+				Reference: apisv1alpha2.BindingReference{
+					Export: &apisv1alpha2.ExportBindingReference{
 						Path: provider.String(),
 						Name: export.Name,
 					},
@@ -150,13 +138,13 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By(fmt.Sprintf("creating an APIBinding in the consumer workspace %q", consumer))
-		binding = &apisv1alpha1.APIBinding{
+		binding = &apisv1alpha2.APIBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "example.com",
 			},
-			Spec: apisv1alpha1.APIBindingSpec{
-				Reference: apisv1alpha1.BindingReference{
-					Export: &apisv1alpha1.ExportBindingReference{
+			Spec: apisv1alpha2.APIBindingSpec{
+				Reference: apisv1alpha2.BindingReference{
+					Export: &apisv1alpha2.ExportBindingReference{
 						Path: provider.String(),
 						Name: export.Name,
 					},
@@ -179,12 +167,12 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 
 		By(fmt.Sprintf("waiting until the APIBinding in the consumer workspace %q to be ready", consumer))
 		envtest.Eventually(GinkgoT(), func() (bool, string) {
-			current := &apisv1alpha1.APIBinding{}
+			current := &apisv1alpha2.APIBinding{}
 			err := cli.Cluster(consumer).Get(ctx, client.ObjectKey{Name: "example.com"}, current)
 			if err != nil {
 				return false, fmt.Sprintf("failed to get APIBinding in %q: %v", consumer, err)
 			}
-			if current.Status.Phase != apisv1alpha1.APIBindingPhaseBound {
+			if current.Status.Phase != apisv1alpha2.APIBindingPhaseBound {
 				return false, fmt.Sprintf("binding not bound:\n\n%s", toYAML(GinkgoT(), current))
 			}
 			return true, ""
@@ -271,7 +259,7 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			By("creating a reconciler for APIBindings")
 			err = mcbuilder.ControllerManagedBy(mgr).
 				Named("things").
-				For(&apisv1alpha1.APIBinding{}).
+				For(&apisv1alpha2.APIBinding{}).
 				Complete(mcreconcile.Func(func(ctx context.Context, request mcreconcile.Request) (reconcile.Result, error) {
 					By(fmt.Sprintf("reconciling APIBinding %s in cluster %q", request.Name, request.ClusterName))
 					lock.Lock()
