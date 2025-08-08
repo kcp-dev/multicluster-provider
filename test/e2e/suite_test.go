@@ -58,7 +58,7 @@ func TestE2e(t *testing.T) {
 
 	// Start a shared kcp instance.
 	var err error
-	env = &envtest.Environment{AttachKcpOutput: testing.Verbose()}
+	env = &envtest.Environment{}
 	kcpConfig, err = env.Start()
 	require.NoError(t, err, "failed to start envtest environment")
 	defer env.Stop() //nolint:errcheck // we don't care about the error here.
