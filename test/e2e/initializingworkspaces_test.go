@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -126,10 +127,12 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 
 	Describe("with a multicluster provider and manager", func() {
 		var (
+			lock                sync.RWMutex
 			engaged             = sets.NewString()
 			p                   *initializingworkspaces.Provider
 			g                   *errgroup.Group
 			cancelGroup         context.CancelFunc
+			initializersLock    sync.RWMutex
 			initializersRemoved = sets.NewString()
 		)
 
@@ -175,7 +178,9 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 							return reconcile.Result{}, fmt.Errorf("failed to get logical cluster: %w", err)
 						}
 
+						lock.Lock()
 						engaged.Insert(request.ClusterName)
+						lock.Unlock()
 						initializer := kcpcorev1alpha1.LogicalClusterInitializer(initName)
 
 						if slices.Contains(lc.Status.Initializers, initializer) {
@@ -186,7 +191,9 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 							if err := clusterClient.Status().Patch(ctx, lc, patch); err != nil {
 								return reconcile.Result{}, err
 							}
+							initializersLock.Lock()
 							initializersRemoved.Insert(request.ClusterName)
+							initializersLock.Unlock()
 						}
 						return reconcile.Result{}, nil
 					}))
@@ -205,20 +212,28 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 		})
 		It("engages both Logical Clusters with initializers", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				lock.RLock()
+				defer lock.RUnlock()
 				return engaged.Has(ws1.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws1.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws1.Spec.Cluster, engaged.List())
 
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				lock.RLock()
+				defer lock.RUnlock()
 				return engaged.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
 		})
 
 		It("removes initializers from the both clusters after engaging", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				initializersLock.RLock()
+				defer initializersLock.RUnlock()
 				return initializersRemoved.Has(ws1.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
 
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				initializersLock.RLock()
+				defer initializersLock.RUnlock()
 				return initializersRemoved.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
 
