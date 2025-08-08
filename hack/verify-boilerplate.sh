@@ -26,6 +26,7 @@ _tools/boilerplate \
   -boilerplates hack/boilerplate \
   -exclude .github \
   -exclude internal/cache/forked_cache_reader.go \
+  -exclude internal/events/recorder/forked_recorder.go \
   -exclude envtest
 _tools/boilerplate -boilerplates hack/boilerplate/kubernetes \
   -exclude envtest/doc.go \
@@ -33,7 +34,8 @@ _tools/boilerplate -boilerplates hack/boilerplate/kubernetes \
   -exclude envtest/scheme.go \
   -exclude envtest/testing.go \
   -exclude envtest/workspaces.go \
-  internal/cache/forked_cache_reader.go
+  internal/cache/forked_cache_reader.go \
+  internal/events/recorder/forked_recorder.go
 _tools/boilerplate \
   -boilerplates hack/boilerplate \
   envtest/doc.go \
