@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 
 	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+	apisv1alpha2 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha2"
 	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
 	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
 	topologyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/topology/v1alpha1"
@@ -28,6 +29,9 @@ import (
 func init() {
 	if err := apisv1alpha1.AddToScheme(scheme.Scheme); err != nil {
 		log.Info("WARNING: failed to add apis.kcp.io/v1alpha1 to scheme", "error", err)
+	}
+	if err := apisv1alpha2.AddToScheme(scheme.Scheme); err != nil {
+		log.Info("WARNING: failed to add apis.kcp.io/v1alpha2 to scheme", "error", err)
 	}
 	if err := corev1alpha1.AddToScheme(scheme.Scheme); err != nil {
 		log.Info("WARNING: failed to add core.kcp.io/v1alpha1 to scheme", "error", err)
