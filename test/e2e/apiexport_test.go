@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
+	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
@@ -115,6 +118,22 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 				Resources: []apisv1alpha2.ResourceSchema{
 					{Name: "things", Group: "example.com", Schema: schema.Name, Storage: apisv1alpha2.ResourceSchemaStorage{CRD: &apisv1alpha2.ResourceSchemaStorageCRD{}}},
 				},
+				PermissionClaims: []apisv1alpha2.PermissionClaim{
+					{
+						GroupResource: apisv1alpha2.GroupResource{
+							Group:    "events.k8s.io",
+							Resource: "events",
+						},
+						Verbs: []string{"*"},
+					},
+					{
+						GroupResource: apisv1alpha2.GroupResource{
+							Group:    "",
+							Resource: "events",
+						},
+						Verbs: []string{"*"},
+					},
+				},
 			},
 		}
 		err = cli.Cluster(provider).Create(ctx, export)
@@ -132,6 +151,38 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 						Name: export.Name,
 					},
 				},
+				PermissionClaims: []apisv1alpha2.AcceptablePermissionClaim{
+					{
+						ScopedPermissionClaim: apisv1alpha2.ScopedPermissionClaim{
+							PermissionClaim: apisv1alpha2.PermissionClaim{
+								GroupResource: apisv1alpha2.GroupResource{
+									Group:    "events.k8s.io",
+									Resource: "events",
+								},
+								Verbs: []string{"*"},
+							},
+							Selector: apisv1alpha2.PermissionClaimSelector{
+								MatchAll: true,
+							},
+						},
+						State: apisv1alpha2.ClaimAccepted,
+					},
+					{
+						ScopedPermissionClaim: apisv1alpha2.ScopedPermissionClaim{
+							PermissionClaim: apisv1alpha2.PermissionClaim{
+								GroupResource: apisv1alpha2.GroupResource{
+									Group:    "",
+									Resource: "events",
+								},
+								Verbs: []string{"*"},
+							},
+							Selector: apisv1alpha2.PermissionClaimSelector{
+								MatchAll: true,
+							},
+						},
+						State: apisv1alpha2.ClaimAccepted,
+					},
+				},
 			},
 		}
 		err = cli.Cluster(other).Create(ctx, binding)
@@ -147,6 +198,38 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 					Export: &apisv1alpha2.ExportBindingReference{
 						Path: provider.String(),
 						Name: export.Name,
+					},
+				},
+				PermissionClaims: []apisv1alpha2.AcceptablePermissionClaim{
+					{
+						ScopedPermissionClaim: apisv1alpha2.ScopedPermissionClaim{
+							PermissionClaim: apisv1alpha2.PermissionClaim{
+								GroupResource: apisv1alpha2.GroupResource{
+									Group:    "events.k8s.io",
+									Resource: "events",
+								},
+								Verbs: []string{"*"},
+							},
+							Selector: apisv1alpha2.PermissionClaimSelector{
+								MatchAll: true,
+							},
+						},
+						State: apisv1alpha2.ClaimAccepted,
+					},
+					{
+						ScopedPermissionClaim: apisv1alpha2.ScopedPermissionClaim{
+							PermissionClaim: apisv1alpha2.PermissionClaim{
+								GroupResource: apisv1alpha2.GroupResource{
+									Group:    "",
+									Resource: "events",
+								},
+								Verbs: []string{"*"},
+							},
+							Selector: apisv1alpha2.PermissionClaimSelector{
+								MatchAll: true,
+							},
+						},
+						State: apisv1alpha2.ClaimAccepted,
 					},
 				},
 			},
@@ -192,11 +275,13 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 
 	Describe("with a multicluster provider and manager", func() {
 		var (
-			lock        sync.RWMutex
-			engaged     = sets.NewString()
-			p           *apiexport.Provider
-			g           *errgroup.Group
-			cancelGroup context.CancelFunc
+			lock           sync.RWMutex
+			engaged        = sets.NewString()
+			eventLock      sync.RWMutex
+			eventRecorders = make(map[string]record.EventRecorder)
+			p              *apiexport.Provider
+			g              *errgroup.Group
+			cancelGroup    context.CancelFunc
 		)
 
 		BeforeAll(func() {
@@ -258,13 +343,37 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 
 			By("creating a reconciler for APIBindings")
 			err = mcbuilder.ControllerManagedBy(mgr).
-				Named("things").
+				Named("apibindings").
 				For(&apisv1alpha2.APIBinding{}).
 				Complete(mcreconcile.Func(func(ctx context.Context, request mcreconcile.Request) (reconcile.Result, error) {
 					By(fmt.Sprintf("reconciling APIBinding %s in cluster %q", request.Name, request.ClusterName))
 					lock.Lock()
 					defer lock.Unlock()
 					engaged.Insert(request.ClusterName)
+
+					cluster, err := mgr.GetCluster(ctx, request.ClusterName)
+					if err != nil {
+						return reconcile.Result{}, err
+					}
+
+					var binding apisv1alpha2.APIBinding
+					err = cluster.GetClient().Get(ctx, request.NamespacedName, &binding)
+					if err != nil {
+						return reconcile.Result{}, err
+					}
+
+					eventLock.RLock()
+					recorder, ok := eventRecorders[request.ClusterName]
+					if !ok {
+						eventLock.RUnlock()
+						eventLock.Lock()
+						recorder = cluster.GetEventRecorderFor(request.ClusterName)
+						eventRecorders[request.ClusterName] = recorder
+						eventLock.Unlock()
+					}
+
+					recorder.Event(&binding, corev1.EventTypeNormal, "reason", "message")
+
 					return reconcile.Result{}, nil
 				}))
 			Expect(err).NotTo(HaveOccurred())
@@ -328,6 +437,36 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 				}
 				return true, ""
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see the stone as only thing of color 'grey' in the consumer cluster")
+		})
+
+		It("creates events on APIBindings in several workspaces", func() {
+			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
+				var events eventsv1.EventList
+				err := cli.Cluster(consumer).List(ctx, &events)
+				if err != nil {
+					return false, err.Error()
+				}
+
+				if len(events.Items) != 1 {
+					return false, fmt.Sprintf("expected to find a single event, found %d", len(events.Items))
+				}
+
+				return true, ""
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see event on APIBinding in %s", consumer.String())
+
+			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
+				var events eventsv1.EventList
+				err := cli.Cluster(other).List(ctx, &events)
+				if err != nil {
+					return false, err.Error()
+				}
+
+				if len(events.Items) != 1 {
+					return false, fmt.Sprintf("expected to find a single event, found %d", len(events.Items))
+				}
+
+				return true, ""
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see event on APIBinding in %s", other.String())
 		})
 
 		AfterAll(func() {
