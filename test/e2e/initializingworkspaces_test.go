@@ -230,18 +230,24 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, list())
 		})
 
+		listRemoved := func() []string {
+			initializersLock.RLock()
+			defer initializersLock.RUnlock()
+			return initializersRemoved.List()
+		}
+
 		It("removes initializers from the both clusters after engaging", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				initializersLock.RLock()
 				defer initializersLock.RUnlock()
 				return initializersRemoved.Has(ws1.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, listRemoved())
 
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				initializersLock.RLock()
 				defer initializersLock.RUnlock()
 				return initializersRemoved.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, listRemoved())
 
 			By("checking if LogicalClusters objects have no initializers left")
 			var err error
