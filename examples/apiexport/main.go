@@ -114,6 +114,8 @@ func main() {
 				}
 
 				log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
+				recorder := cl.GetEventRecorderFor("kdp-configmap-controller")
+				recorder.Eventf(s, corev1.EventTypeNormal, "ConfigMap Reconciled", "ConfigMap %s reconciled", s.Name)
 
 				return reconcile.Result{}, nil
 			},
