@@ -33,10 +33,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
 	"github.com/kcp-dev/logicalcluster/v3"
+
+	mcrecorder "github.com/kcp-dev/multicluster-provider/internal/events/recorder"
 )
 
 // NewScopedCluster constructs a new cluster.Cluster that operates on a specific logical cluster.
-func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme) (*ScopedCluster, error) {
+func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme, recorderProvider *mcrecorder.Provider) (*ScopedCluster, error) {
 	cfg = rest.CopyConfig(cfg)
 	host, err := url.JoinPath(cfg.Host, clusterName.Path().RequestPath())
 	if err != nil {
@@ -66,13 +68,14 @@ func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 	}
 
 	return &ScopedCluster{
-		clusterName: clusterName,
-		config:      cfg,
-		scheme:      scheme,
-		client:      cli,
-		httpClient:  httpClient,
-		mapper:      mapper,
-		cache:       ca,
+		clusterName:      clusterName,
+		config:           cfg,
+		scheme:           scheme,
+		client:           cli,
+		httpClient:       httpClient,
+		mapper:           mapper,
+		cache:            ca,
+		recorderProvider: recorderProvider,
 	}, nil
 }
 
@@ -124,12 +127,13 @@ var _ cluster.Cluster = &ScopedCluster{}
 type ScopedCluster struct {
 	clusterName logicalcluster.Name
 
-	scheme     *runtime.Scheme
-	config     *rest.Config
-	httpClient *http.Client
-	client     client.Client
-	mapper     meta.RESTMapper
-	cache      cache.Cache
+	scheme           *runtime.Scheme
+	config           *rest.Config
+	httpClient       *http.Client
+	client           client.Client
+	mapper           meta.RESTMapper
+	cache            cache.Cache
+	recorderProvider *mcrecorder.Provider
 }
 
 // GetHTTPClient returns the HTTP client scoped to the cluster.
@@ -169,7 +173,7 @@ func (c *ScopedCluster) GetClient() client.Client {
 
 // GetEventRecorderFor returns a new EventRecorder for the provided name.
 func (c *ScopedCluster) GetEventRecorderFor(name string) record.EventRecorder {
-	panic("implement me")
+	return c.recorderProvider.GetEventRecorderFor(c.config, name, c.clusterName.String())
 }
 
 // GetAPIReader returns a reader against the cluster.

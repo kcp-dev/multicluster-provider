@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -43,6 +44,7 @@ import (
 	"github.com/kcp-dev/logicalcluster/v3"
 
 	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
+	mcrecorder "github.com/kcp-dev/multicluster-provider/internal/events/recorder"
 )
 
 var _ multicluster.Provider = &Provider{}
@@ -62,6 +64,8 @@ type Provider struct {
 	lock      sync.RWMutex
 	clusters  map[logicalcluster.Name]cluster.Cluster
 	cancelFns map[logicalcluster.Name]context.CancelFunc
+
+	recorderProvider *mcrecorder.Provider
 }
 
 // Options are the options for creating a new instance of the apiexport provider.
@@ -81,6 +85,12 @@ type Options struct {
 	// against custom virtual workspaces that are not the APIExport one but share
 	// the same endpoint semantics.
 	ObjectToWatch client.Object
+
+	// makeBroadcaster allows deferring the creation of the broadcaster to
+	// avoid leaking goroutines if we never call Start on this manager.  It also
+	// returns whether or not this is an "owned" broadcaster, and as such should be
+	// stopped with the manager.
+	makeBroadcaster mcrecorder.EventBroadcasterProducer
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
@@ -105,6 +115,22 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
 	}
 
+	if options.makeBroadcaster == nil {
+		options.makeBroadcaster = func() (record.EventBroadcaster, bool) {
+			return record.NewBroadcaster(), true
+		}
+	}
+
+	eventClient, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP client for events: %w", err)
+	}
+
+	recorderProvider, err := mcrecorder.NewProvider(eventClient, options.Scheme, logr.Discard(), options.makeBroadcaster)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Provider{
 		config: cfg,
 		scheme: options.Scheme,
@@ -115,6 +141,8 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 
 		clusters:  map[logicalcluster.Name]cluster.Cluster{},
 		cancelFns: map[logicalcluster.Name]context.CancelFunc{},
+
+		recorderProvider: recorderProvider,
 	}, nil
 }
 
@@ -157,7 +185,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 
 			// create new scoped cluster.
 			clusterCtx, cancel := context.WithCancel(ctx)
-			cl, err := mcpcache.NewScopedCluster(p.config, clusterName, p.cache, p.scheme)
+			cl, err := mcpcache.NewScopedCluster(p.config, clusterName, p.cache, p.scheme, p.recorderProvider)
 			if err != nil {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 				cancel()
@@ -205,6 +233,14 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 			}
 			if len(keys) == 0 {
 				p.lock.Lock()
+
+				// shut down individual event broadaster
+				if err := p.recorderProvider.StopBroadcaster(clusterName.String()); err != nil {
+					p.lock.Unlock()
+					p.log.Error(err, "failed to stop event broadcaster", "cluster", clusterName)
+					return
+				}
+
 				cancel, ok := p.cancelFns[clusterName]
 				if ok {
 					p.log.Info("disengaging cluster", "cluster", clusterName)
@@ -220,6 +256,17 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 	}
 
 	g.Go(func() error { return p.cache.Start(ctx) })
+	g.Go(func() error {
+		// wait for context stop and try to shut down event broadcasters
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			p.recorderProvider.Stop(shutdownCtx)
+		default:
+		}
+		return nil
+	})
 
 	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

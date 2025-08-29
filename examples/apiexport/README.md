@@ -16,7 +16,7 @@ workspace.tenancy.kcp.io/example3 created
 Then, start the example controller by passing the virtual workspace URL to it:
 
 ```sh
-$ go run . --server=$(kubectl get apiexport examples-apiexport-multicluster -o jsonpath="{.status.virtualWorkspaces[0].url}")
+$ go run . --server=$(kubectl get apiexportendpointslice examples-apiexport-multicluster -o jsonpath="{.status.virtualWorkspaces[0].url}")
 ```
 
 Observe the controller reconciling the `kube-root-ca.crt` ConfigMap created in each workspace:
