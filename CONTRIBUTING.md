@@ -1,10 +1,10 @@
 # Contributing to kcp
 
 We're thrilled that you're interested in contributing to kcp! Please visit our
-[full contributing guide](https://docs.kcp.io/kcp/main/en/CONTRIBUTING/) on our documentation site.
+[full contributing guide](https://docs.kcp.io/kcp/latest/contributing/) on our documentation site.
 
 Beside that, what coverns the project and all contributions to it must follow
-the [kcp Project Governance](./GOVERNANCE.md).
+the [kcp Project Governance](https://github.com/kcp-dev/kcp/blob/main/GOVERNANCE.md).
 
 From the kcp Project Governance, the following manifesto should guide the technical
 decisions through-out all contributions:
