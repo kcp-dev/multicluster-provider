@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
@@ -38,19 +39,24 @@ type EventBroadcasterProducer func() (caster record.EventBroadcaster, stopWithPr
 // Provider is a recorder.Provider that records events to the k8s API server
 // and to a logr Logger.
 type Provider struct {
-	lock    sync.RWMutex
-	stopped bool
+	lock sync.RWMutex
 
 	// scheme to specify when creating a recorder
-	scheme *runtime.Scheme
+	scheme     *runtime.Scheme
+	baseConfig *rest.Config
+	httpClient *http.Client
 	// logger is the logger to use when logging diagnostic event info
 	logger          logr.Logger
-	evtClient       corev1client.EventInterface
 	makeBroadcaster EventBroadcasterProducer
 
-	broadcasterOnce sync.Once
-	broadcaster     record.EventBroadcaster
-	stopBroadcaster bool
+	// broadcasters holds the broadcasters created for each logical cluster
+	broadcasters map[string]*broadcaster
+}
+
+type broadcaster struct {
+	broadcaster record.EventBroadcaster
+	stop        bool
+	stopped     bool
 }
 
 // NB(directxman12): this manually implements Stop instead of Being a runnable because we need to
@@ -71,12 +77,14 @@ func (p *Provider) Stop(shutdownCtx context.Context) {
 		// almost certainly already been started (e.g. by leader election).  We
 		// need to invoke this to ensure that we don't inadvertently race with
 		// an invocation of getBroadcaster.
-		broadcaster := p.getBroadcaster()
-		if p.stopBroadcaster {
-			p.lock.Lock()
-			broadcaster.Shutdown()
-			p.stopped = true
-			p.lock.Unlock()
+		for key := range p.broadcasters {
+			broadcaster, err := p.getBroadcaster(nil, key)
+			if err == nil && p.broadcasters[key].stop {
+				p.lock.Lock()
+				broadcaster.Shutdown()
+				p.broadcasters[key].stopped = true
+				p.lock.Unlock()
+			}
 		}
 		close(doneCh)
 	}()
@@ -89,56 +97,78 @@ func (p *Provider) Stop(shutdownCtx context.Context) {
 
 // getBroadcaster ensures that a broadcaster is started for this
 // provider, and returns it.  It's threadsafe.
-func (p *Provider) getBroadcaster() record.EventBroadcaster {
+func (p *Provider) getBroadcaster(cfg *rest.Config, clusterName string) (record.EventBroadcaster, error) {
 	// NB(directxman12): this can technically still leak if something calls
 	// "getBroadcaster" (i.e. Emits an Event) but never calls Start, but if we
 	// create the broadcaster in start, we could race with other things that
 	// are started at the same time & want to emit events.  The alternative is
 	// silently swallowing events and more locking, but that seems suboptimal.
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
-	p.broadcasterOnce.Do(func() {
-		broadcaster, stop := p.makeBroadcaster()
-		broadcaster.StartRecordingToSink(&corev1client.EventSinkImpl{Interface: p.evtClient})
-		broadcaster.StartEventWatcher(
+	if p.broadcasters == nil {
+		p.broadcasters = make(map[string]*broadcaster)
+	}
+
+	if _, ok := p.broadcasters[clusterName]; !ok {
+		corev1Client, err := corev1client.NewForConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to init core v1 client for event broadcaster: %w", err)
+		}
+		caster, stop := p.makeBroadcaster()
+		caster.StartRecordingToSink(&corev1client.EventSinkImpl{Interface: corev1Client.Events("")})
+		caster.StartEventWatcher(
 			func(e *corev1.Event) {
-				p.logger.V(1).Info(e.Message, "type", e.Type, "object", e.InvolvedObject, "reason", e.Reason)
+				p.logger.V(1).Info(e.Message, "type", e.Type, "object", e.InvolvedObject, "reason", e.Reason, "clusterName", clusterName)
 			})
-		p.broadcaster = broadcaster
-		p.stopBroadcaster = stop
-	})
+		p.broadcasters[clusterName] = &broadcaster{broadcaster: caster, stop: stop}
+	}
 
-	return p.broadcaster
+	return p.broadcasters[clusterName].broadcaster, nil
+}
+
+// StopBroadcaster shuts down an individual broadcaster for a specific logical cluster name
+func (p *Provider) StopBroadcaster(clusterName string) error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if caster, ok := p.broadcasters[clusterName]; ok {
+		caster.broadcaster.Shutdown()
+		delete(p.broadcasters, clusterName)
+	}
+
+	return nil
 }
 
 // NewProvider create a new Provider instance.
-func NewProvider(config *rest.Config, httpClient *http.Client, scheme *runtime.Scheme, logger logr.Logger, makeBroadcaster EventBroadcasterProducer) (*Provider, error) {
+func NewProvider(baseConfig *rest.Config, httpClient *http.Client, scheme *runtime.Scheme, logger logr.Logger, makeBroadcaster EventBroadcasterProducer) (*Provider, error) {
 	if httpClient == nil {
 		panic("httpClient must not be nil")
 	}
 
-	corev1Client, err := corev1client.NewForConfigAndClient(config, httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to init client: %w", err)
-	}
-
-	p := &Provider{scheme: scheme, logger: logger, makeBroadcaster: makeBroadcaster, evtClient: corev1Client.Events("")}
+	p := &Provider{scheme: scheme, logger: logger, makeBroadcaster: makeBroadcaster, baseConfig: baseConfig, httpClient: httpClient}
 	return p, nil
 }
 
 // GetEventRecorderFor returns an event recorder that broadcasts to this provider's
 // broadcaster.  All events will be associated with a component of the given name.
-func (p *Provider) GetEventRecorderFor(name string) record.EventRecorder {
+func (p *Provider) GetEventRecorderFor(cfg *rest.Config, name, clusterName string) record.EventRecorder {
 	return &lazyRecorder{
-		prov: p,
-		name: name,
+		prov:        p,
+		name:        name,
+		clusterName: clusterName,
+		cfg:         cfg,
 	}
 }
 
 // lazyRecorder is a recorder that doesn't actually instantiate any underlying
 // recorder until the first event is emitted.
 type lazyRecorder struct {
-	prov *Provider
-	name string
+	cfg *rest.Config
+
+	prov        *Provider
+	name        string
+	clusterName string
 
 	recOnce sync.Once
 	rec     record.EventRecorder
@@ -147,8 +177,10 @@ type lazyRecorder struct {
 // ensureRecording ensures that a concrete recorder is populated for this recorder.
 func (l *lazyRecorder) ensureRecording() {
 	l.recOnce.Do(func() {
-		broadcaster := l.prov.getBroadcaster()
-		l.rec = broadcaster.NewRecorder(l.prov.scheme, corev1.EventSource{Component: l.name})
+		broadcaster, err := l.prov.getBroadcaster(l.cfg, l.clusterName)
+		if err == nil {
+			l.rec = broadcaster.NewRecorder(l.prov.scheme, corev1.EventSource{Component: l.name})
+		}
 	})
 }
 
@@ -156,25 +188,25 @@ func (l *lazyRecorder) Event(object runtime.Object, eventtype, reason, message s
 	l.ensureRecording()
 
 	l.prov.lock.RLock()
-	if !l.prov.stopped {
+	if !l.prov.broadcasters[l.clusterName].stopped && l.rec != nil {
 		l.rec.Event(object, eventtype, reason, message)
 	}
 	l.prov.lock.RUnlock()
 }
-func (l *lazyRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+func (l *lazyRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	l.ensureRecording()
 
 	l.prov.lock.RLock()
-	if !l.prov.stopped {
+	if !l.prov.broadcasters[l.clusterName].stopped && l.rec != nil {
 		l.rec.Eventf(object, eventtype, reason, messageFmt, args...)
 	}
 	l.prov.lock.RUnlock()
 }
-func (l *lazyRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
+func (l *lazyRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...any) {
 	l.ensureRecording()
 
 	l.prov.lock.RLock()
-	if !l.prov.stopped {
+	if !l.prov.broadcasters[l.clusterName].stopped && l.rec != nil {
 		l.rec.AnnotatedEventf(object, annotations, eventtype, reason, messageFmt, args...)
 	}
 	l.prov.lock.RUnlock()
