@@ -204,9 +204,6 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 			groupContext, cancelGroup = context.WithCancel(ctx)
 			g, groupContext = errgroup.WithContext(groupContext)
 			g.Go(func() error {
-				return p.Run(groupContext, mgr)
-			})
-			g.Go(func() error {
 				return mgr.Start(groupContext)
 			})
 		})

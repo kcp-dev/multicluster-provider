@@ -185,16 +185,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if provider != nil {
-		entryLog.Info("Starting provider")
-		go func() {
-			if err := provider.Run(ctx, mgr); err != nil {
-				entryLog.Error(err, "unable to run provider")
-				os.Exit(1)
-			}
-		}()
-	}
-
 	entryLog.Info("Starting manager")
 	if err := mgr.Start(ctx); err != nil {
 		entryLog.Error(err, "unable to run manager")
