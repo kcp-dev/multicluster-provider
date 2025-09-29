@@ -31,9 +31,9 @@ metadata:
   name: logicalcluster.workspaces.kcp.dev
 spec:
   permissionClaims:
-  - all: true
-    group: core.kcp.io
+  - group: core.kcp.io
     resource: logicalclusters
+    verbs: ["*"]
 EOF
 ```
 
