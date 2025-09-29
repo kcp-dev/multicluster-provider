@@ -80,6 +80,8 @@ func main() {
 	cfgRoot.Host = strings.Split(cfgRoot.Host, "/clusters/")[0]
 
 	// Assume that our restConfig we use for this example can access all the workspaces:
+	// IMPORTANT: This should be shard-aware client, meaning it should go via front-proxy to be able to resolve
+	// objects accross shards.
 	kcpkubernetesClient, err := kcpkubernetesclient.NewForConfig(cfgRoot)
 	if err != nil {
 		entryLog.Error(err, "failed to create kcp kubernetes client")
