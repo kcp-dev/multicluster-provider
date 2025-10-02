@@ -36,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	kcpcorev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
@@ -60,6 +59,7 @@ type Provider struct {
 	log logr.Logger
 
 	lock      sync.RWMutex
+	aware     multicluster.Aware
 	clusters  map[logicalcluster.Name]cluster.Cluster
 	cancelFns map[logicalcluster.Name]context.CancelFunc
 }
@@ -109,8 +109,10 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 	}, nil
 }
 
-// Run starts the provider and blocks.
-func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
+// Start starts the provider and blocks.
+func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
+	p.aware = aware
+
 	g, ctx := errgroup.WithContext(ctx)
 	inf, err := p.wildcardCache.GetInformer(ctx, &kcpcorev1alpha1.LogicalCluster{}, cache.BlockUntilSynced(true))
 	if err != nil {
@@ -119,10 +121,10 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 
 	if _, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			p.handleLogicalClusterEvent(ctx, obj, mgr)
+			p.handleLogicalClusterEvent(ctx, obj, p.aware)
 		},
 		UpdateFunc: func(_, newObj any) {
-			p.handleLogicalClusterEvent(ctx, newObj, mgr)
+			p.handleLogicalClusterEvent(ctx, newObj, p.aware)
 		},
 		DeleteFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
@@ -177,7 +179,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 }
 
 // handleLogicalClusterEvent processes LogicalCluster events and engages initializing workspaces
-func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any, mgr mcmanager.Manager) {
+func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any, aware multicluster.Aware) {
 	cobj, ok := obj.(client.Object)
 	if !ok {
 		klog.Errorf("unexpected object type %T", obj)
@@ -239,7 +241,7 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any, mgr m
 	p.lock.Unlock()
 
 	p.log.Info("engaging cluster", "cluster", clusterName)
-	if err := mgr.Engage(clusterCtx, clusterName.String(), cl); err != nil {
+	if err := aware.Engage(clusterCtx, clusterName.String(), cl); err != nil {
 		p.log.Error(err, "failed to engage cluster", "cluster", clusterName)
 		p.lock.Lock()
 		cancel()

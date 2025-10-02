@@ -36,7 +36,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
@@ -48,6 +47,7 @@ import (
 )
 
 var _ multicluster.Provider = &Provider{}
+var _ multicluster.ProviderRunnable = &Provider{}
 
 // Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that represents each [logical cluster]
 // (in the kcp sense) exposed via a APIExport virtual workspace as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
@@ -62,6 +62,7 @@ type Provider struct {
 	log logr.Logger
 
 	lock      sync.RWMutex
+	aware     multicluster.Aware
 	clusters  map[logicalcluster.Name]cluster.Cluster
 	cancelFns map[logicalcluster.Name]context.CancelFunc
 
@@ -146,9 +147,10 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 	}, nil
 }
 
-// Run starts the provider and blocks.
-func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
+// Start starts the provider and blocks.
+func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	g, ctx := errgroup.WithContext(ctx)
+	p.aware = aware
 
 	// Watch logical clusters and engage them as clusters in multicluster-runtime.
 	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(false))
@@ -197,7 +199,7 @@ func (p *Provider) Run(ctx context.Context, mgr mcmanager.Manager) error {
 			p.lock.Unlock()
 
 			p.log.Info("engaging cluster", "cluster", clusterName)
-			if err := mgr.Engage(clusterCtx, clusterName.String(), cl); err != nil {
+			if err := p.aware.Engage(clusterCtx, clusterName.String(), cl); err != nil {
 				p.log.Error(err, "failed to engage cluster", "cluster", clusterName)
 				p.lock.Lock()
 				cancel()
