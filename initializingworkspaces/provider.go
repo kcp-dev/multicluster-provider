@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -228,12 +227,7 @@ func (p *Provider) handleLogicalClusterEvent(ctx context.Context, obj any, mgr m
 	clusterCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	cfg := rest.CopyConfig(p.config)
-	host := cfg.Host
-	host = strings.TrimSuffix(host, "/clusters/*")
-	cfg.Host = fmt.Sprintf("%s/clusters/%s", host, clusterName)
-
-	cl, err := mcpcache.NewScopedInitializingCluster(cfg, clusterName, p.wildcardCache, p.scheme)
+	cl, err := mcpcache.NewScopedInitializingCluster(p.config, clusterName, p.wildcardCache, p.scheme)
 	if err != nil {
 		p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 		cancel()

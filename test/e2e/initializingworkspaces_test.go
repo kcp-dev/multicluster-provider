@@ -211,31 +211,43 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 			})
 		})
 		It("engages both Logical Clusters with initializers", func() {
+			list := func() []string {
+				lock.RLock()
+				defer lock.RUnlock()
+				return engaged.List()
+			}
+
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				lock.RLock()
 				defer lock.RUnlock()
 				return engaged.Has(ws1.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws1.Spec.Cluster, engaged.List())
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws1.Spec.Cluster, engaged.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws1.Spec.Cluster, list())
 
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				lock.RLock()
 				defer lock.RUnlock()
 				return engaged.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, engaged.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see workspace %q engaged as a cluster: %v", ws2.Spec.Cluster, list())
 		})
+
+		listRemoved := func() []string {
+			initializersLock.RLock()
+			defer initializersLock.RUnlock()
+			return initializersRemoved.List()
+		}
 
 		It("removes initializers from the both clusters after engaging", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				initializersLock.RLock()
 				defer initializersLock.RUnlock()
 				return initializersRemoved.Has(ws1.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, initializersRemoved.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws1.Spec.Cluster, listRemoved())
 
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				initializersLock.RLock()
 				defer initializersLock.RUnlock()
 				return initializersRemoved.Has(ws2.Spec.Cluster), fmt.Sprintf("failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
-			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, initializersRemoved.List())
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see removed initializer from %q cluster: %v", ws2.Spec.Cluster, listRemoved())
 
 			By("checking if LogicalClusters objects have no initializers left")
 			var err error
