@@ -95,7 +95,7 @@ func (c *scopedCache) GetInformer(ctx context.Context, obj client.Object, opts .
 	if err != nil {
 		return nil, err
 	}
-	return &scopedInformer{clusterName: c.clusterName, Informer: inf}, nil
+	return &scopedInformer{clusterName: c.clusterName, informer: inf}, nil
 }
 
 // GetInformerForKind returns an informer for the given GroupVersionKind.
@@ -104,7 +104,7 @@ func (c *scopedCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVe
 	if err != nil {
 		return nil, err
 	}
-	return &scopedInformer{clusterName: c.clusterName, Informer: inf}, nil
+	return &scopedInformer{clusterName: c.clusterName, informer: inf}, nil
 }
 
 // RemoveInformer removes an informer from the cache.
@@ -115,39 +115,21 @@ func (c *scopedCache) RemoveInformer(ctx context.Context, obj client.Object) err
 // scopedInformer is an informer that operates on a specific namespace.
 type scopedInformer struct {
 	clusterName logicalcluster.Name
-	cache.Informer
+	informer    cache.Informer
 }
 
 // AddEventHandler adds an event handler to the informer.
 func (i *scopedInformer) AddEventHandler(handler toolscache.ResourceEventHandler) (toolscache.ResourceEventHandlerRegistration, error) {
-	return i.Informer.AddEventHandler(toolscache.ResourceEventHandlerDetailedFuncs{
-		AddFunc: func(obj any, isInInitialList bool) {
-			if cobj := obj.(client.Object); logicalcluster.From(cobj) == i.clusterName {
-				handler.OnAdd(obj, isInInitialList)
-			}
-		},
-		UpdateFunc: func(oldObj, newObj any) {
-			if cobj := newObj.(client.Object); logicalcluster.From(cobj) == i.clusterName {
-				handler.OnUpdate(oldObj, newObj)
-			}
-		},
-		DeleteFunc: func(obj any) {
-			var cobj client.Object
-			if tombStone, ok := obj.(toolscache.DeletedFinalStateUnknown); ok {
-				cobj = tombStone.Obj.(client.Object)
-			} else {
-				cobj = obj.(client.Object)
-			}
-			if logicalcluster.From(cobj) == i.clusterName {
-				handler.OnDelete(obj)
-			}
-		},
-	})
+	return i.AddEventHandlerWithOptions(handler, toolscache.HandlerOptions{})
 }
 
 // AddEventHandlerWithResyncPeriod adds an event handler to the informer with a resync period.
 func (i *scopedInformer) AddEventHandlerWithResyncPeriod(handler toolscache.ResourceEventHandler, resyncPeriod time.Duration) (toolscache.ResourceEventHandlerRegistration, error) {
-	return i.Informer.AddEventHandlerWithResyncPeriod(toolscache.ResourceEventHandlerDetailedFuncs{
+	return i.AddEventHandlerWithOptions(handler, toolscache.HandlerOptions{ResyncPeriod: &resyncPeriod})
+}
+
+func (i *scopedInformer) AddEventHandlerWithOptions(handler toolscache.ResourceEventHandler, options toolscache.HandlerOptions) (toolscache.ResourceEventHandlerRegistration, error) {
+	return i.informer.AddEventHandlerWithOptions(toolscache.ResourceEventHandlerDetailedFuncs{
 		AddFunc: func(obj any, isInInitialList bool) {
 			if cobj := obj.(client.Object); logicalcluster.From(cobj) == i.clusterName {
 				handler.OnAdd(obj, isInInitialList)
@@ -169,10 +151,27 @@ func (i *scopedInformer) AddEventHandlerWithResyncPeriod(handler toolscache.Reso
 				handler.OnDelete(obj)
 			}
 		},
-	}, resyncPeriod)
+	}, options)
 }
 
 // AddIndexers adds indexers to the informer.
 func (i *scopedInformer) AddIndexers(_ toolscache.Indexers) error {
 	return errors.New("AddIndexers is not supported on scoped informers")
+}
+
+// RemoveEventHandler removes a previously added event handler given by
+// its registration handle.
+// This function is guaranteed to be idempotent and thread-safe.
+func (i *scopedInformer) RemoveEventHandler(handle toolscache.ResourceEventHandlerRegistration) error {
+	return i.informer.RemoveEventHandler(handle)
+}
+
+// HasSynced returns true if the informers underlying store has synced.
+func (i *scopedInformer) HasSynced() bool {
+	return i.informer.HasSynced()
+}
+
+// IsStopped returns true if the informer has been stopped.
+func (i *scopedInformer) IsStopped() bool {
+	return i.informer.IsStopped()
 }
