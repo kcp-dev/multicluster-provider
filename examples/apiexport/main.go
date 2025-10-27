@@ -27,7 +27,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -59,26 +58,21 @@ func main() {
 	entryLog := log.Log.WithName("entrypoint")
 
 	var (
-		server   string
-		provider *apiexport.Provider
+		endpointSlice string
+		provider      *apiexport.Provider
 	)
 
-	pflag.StringVar(&server, "server", "", "Override for kubeconfig server URL")
+	pflag.StringVar(&endpointSlice, "endpointslice", "examples-apiexport-multicluster", "Set the APIExportEndpointSlice name to watch")
 	pflag.Parse()
 
 	cfg := ctrl.GetConfigOrDie()
-	cfg = rest.CopyConfig(cfg)
-
-	if server != "" {
-		cfg.Host = server
-	}
 
 	// Setup a Manager, note that this not yet engages clusters, only makes them available.
 	entryLog.Info("Setting up manager")
 	opts := manager.Options{}
 
 	var err error
-	provider, err = apiexport.New(cfg, apiexport.Options{})
+	provider, err = apiexport.New(cfg, endpointSlice, apiexport.Options{})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)
