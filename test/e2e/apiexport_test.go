@@ -306,8 +306,10 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			By("creating a multicluster provider for APIBindings against the apiexport virtual workspace")
 			vwConfig := rest.CopyConfig(kcpConfig)
 			vwConfig.Host = vwEndpoint
+			providerConfig := rest.CopyConfig(kcpConfig)
+			providerConfig.Host += provider.RequestPath()
 			var err error
-			p, err = apiexport.New(vwConfig, apiexport.Options{})
+			p, err = apiexport.New(providerConfig, "example.com", apiexport.Options{})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("waiting for discovery of the virtual workspace to show 'example.com'")
@@ -392,12 +394,12 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				lock.RLock()
 				defer lock.RUnlock()
-				return engaged.Has(consumerWS.Spec.Cluster), fmt.Sprintf("failed to see the consumer workspace %q as a cluster: %v", consumerWS.Spec.Cluster, engaged.List())
+				return engaged.Has(fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster)), fmt.Sprintf("failed to see the consumer workspace %q as a cluster: %v", consumerWS.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see the consumer workspace %q as a cluster", consumer)
 		})
 
 		It("sees only the stone in the consumer clusters", func() {
-			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
+			consumerCl, err := mgr.GetCluster(ctx, fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster))
 			Expect(err).NotTo(HaveOccurred())
 
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
@@ -417,7 +419,7 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 		})
 
 		It("sees only the stone as grey thing in the consumer clusters", func() {
-			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
+			consumerCl, err := mgr.GetCluster(ctx, fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster))
 			Expect(err).NotTo(HaveOccurred())
 
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
