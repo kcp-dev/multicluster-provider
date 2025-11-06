@@ -134,7 +134,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 		AddFunc: func(obj any) {
 			es := obj.(*apisv1alpha1.APIExportEndpointSlice)
 			for _, endpoint := range es.Status.APIExportEndpoints {
-				id := hashURL(endpoint.URL)
+				id := HashAPIExportURL(endpoint.URL)
 				cfg := rest.CopyConfig(p.config)
 				cfg.Host = endpoint.URL
 
@@ -168,7 +168,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			p.lock.RUnlock()
 
 			for _, endpoint := range es.Status.APIExportEndpoints {
-				id := hashURL(endpoint.URL)
+				id := HashAPIExportURL(endpoint.URL)
 				_, exists := currentUrls[id]
 
 				// Start provider if we didn't have it registered before.
@@ -241,7 +241,9 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	return g.Wait()
 }
 
-func hashURL(url string) string {
+// HashAPIExportURL hashes an URL from an APIExportEndpointSlice status.
+// It can be used to address clusters by calling GetCluster with "<URL hash>#<logical cluster name>".
+func HashAPIExportURL(url string) string {
 	sha := sha256.New()
 	sha.Write([]byte(url))
 	return hex.EncodeToString(sha.Sum(nil))[:8]
