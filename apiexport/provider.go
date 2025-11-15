@@ -94,6 +94,7 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 	}
 
 	c, err := cache.New(cfg, cache.Options{
+		Scheme: options.Scheme,
 		ByObject: map[client.Object]cache.ByObject{
 			&apisv1alpha1.APIExportEndpointSlice{}: {
 				Field: fields.SelectorFromSet(fields.Set{"metadata.name": endpointSliceName}),
