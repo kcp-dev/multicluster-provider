@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sync"
 
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/errgroup"
@@ -59,10 +58,6 @@ type Provider struct {
 	scheme *runtime.Scheme
 	object client.Object
 	cache  cache.Cache
-
-	// track engaged endpoints.
-	lock      sync.RWMutex
-	endpoints map[string]any
 }
 
 // Options are the options for creating a new instance of the apiexport provider.
@@ -113,9 +108,6 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 		object: options.ObjectToWatch,
 		cache:  c,
 
-		lock:      sync.RWMutex{},
-		endpoints: map[string]any{},
-
 		log: log.Log.WithName("kcp-apiexport-cluster-provider"),
 	}, nil
 }
@@ -134,75 +126,13 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			es := obj.(*apisv1alpha1.APIExportEndpointSlice)
-			for _, endpoint := range es.Status.APIExportEndpoints {
-				id := HashAPIExportURL(endpoint.URL)
-				cfg := rest.CopyConfig(p.config)
-				cfg.Host = endpoint.URL
-
-				logger := p.log.WithValues("endoint", id)
-				prov, err := provider.New(cfg, provider.Options{ObjectToWatch: p.object, Scheme: p.scheme, Log: &logger})
-				if err != nil {
-					p.log.Error(err, "failed to create provider")
-				}
-
-				if err := p.AddProvider(id, prov); err != nil {
-					p.log.Error(err, "failed to add provider")
-				}
-
-				p.log.Info("added endpoint as new provider", "endpoint", id, "url", endpoint.URL)
-
-				p.lock.Lock()
-				defer p.lock.Unlock()
-				p.endpoints[id] = struct{}{}
-			}
+			p.log.Info("added APIExportEndpointSlice", "name", es.Name)
+			p.update(es)
 		},
 		UpdateFunc: func(oldObj any, newObj any) {
 			es := newObj.(*apisv1alpha1.APIExportEndpointSlice)
 			p.log.Info("updated APIExportEndpointSlice", "name", es.Name)
-
-			// Create a map of URLs we stored before.
-			currentUrls := map[string]bool{}
-			p.lock.RLock()
-			for id := range p.endpoints {
-				currentUrls[id] = false
-			}
-			p.lock.RUnlock()
-
-			for _, endpoint := range es.Status.APIExportEndpoints {
-				id := HashAPIExportURL(endpoint.URL)
-				_, exists := currentUrls[id]
-
-				// Start provider if we didn't have it registered before.
-				// Else, we just mark that we found it (for cleaning up outdated providers later).
-				if !exists {
-					cfg := rest.CopyConfig(p.config)
-					cfg.Host = endpoint.URL
-
-					logger := p.log.WithValues("endpoint", id)
-					prov, err := provider.New(cfg, provider.Options{ObjectToWatch: p.object, Scheme: p.scheme, Log: &logger})
-					if err != nil {
-						p.log.Error(err, "failed to create provider")
-					}
-					if err := p.AddProvider(id, prov); err != nil {
-						p.log.Error(err, "failed to add provider")
-					}
-
-					p.log.Info("added endpoint as new provider", "endpoint", id, "url", endpoint.URL)
-
-					p.lock.Lock()
-					p.endpoints[id] = struct{}{}
-					p.lock.Unlock()
-				} else {
-					currentUrls[id] = true
-				}
-			}
-
-			// Cleanup outdated URLs.
-			for key, found := range currentUrls {
-				if !found {
-					p.RemoveProvider(key)
-				}
-			}
+			p.update(es)
 		},
 		DeleteFunc: func(obj any) {
 			p.log.Info("deleted APIExportEndpointSlice, stopping provider")
@@ -240,6 +170,44 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	p.log.V(4).Info("caches have synced")
 
 	return g.Wait()
+}
+
+func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
+	currrent := map[string]struct{}{}
+
+	for _, endpoint := range es.Status.APIExportEndpoints {
+		id := HashAPIExportURL(endpoint.URL)
+		// Skip already registered endpoints.
+		if _, exists := p.GetProvider(id); exists {
+			currrent[id] = struct{}{}
+			continue
+		}
+
+		// Start provider if we didn't have it registered before.
+		// Else, we just mark that we found it (for cleaning up outdated providers later).
+		cfg := rest.CopyConfig(p.config)
+		cfg.Host = endpoint.URL
+
+		logger := p.log.WithValues("endpoint", id)
+		prov, err := provider.New(cfg, provider.Options{ObjectToWatch: p.object, Scheme: p.scheme, Log: &logger})
+		if err != nil {
+			p.log.Error(err, "failed to create provider")
+			continue
+		}
+		if err := p.AddProvider(id, prov); err != nil {
+			p.log.Error(err, "failed to add provider")
+			continue
+		}
+		p.log.Info("added endpoint as new provider", "endpoint", id, "url", endpoint.URL)
+		currrent[id] = struct{}{}
+	}
+
+	for _, prefix := range p.ProviderNames() {
+		if _, exists := currrent[prefix]; !exists {
+			p.RemoveProvider(prefix)
+			p.log.Info("removed endpoint provider", "endpoint", prefix)
+		}
+	}
 }
 
 // HashAPIExportURL hashes an URL from an APIExportEndpointSlice status.
