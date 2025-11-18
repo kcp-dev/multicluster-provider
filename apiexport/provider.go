@@ -94,6 +94,7 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 	}
 
 	c, err := cache.New(cfg, cache.Options{
+		Scheme: options.Scheme,
 		ByObject: map[client.Object]cache.ByObject{
 			&apisv1alpha1.APIExportEndpointSlice{}: {
 				Field: fields.SelectorFromSet(fields.Set{"metadata.name": endpointSliceName}),
@@ -142,6 +143,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				prov, err := provider.New(cfg, provider.Options{ObjectToWatch: p.object, Scheme: p.scheme, Log: &logger})
 				if err != nil {
 					p.log.Error(err, "failed to create provider")
+					continue
 				}
 
 				if err := p.AddProvider(id, prov); err != nil {
@@ -200,6 +202,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			for key, found := range currentUrls {
 				if !found {
 					p.RemoveProvider(key)
+					delete(p.endpoints, key)
 				}
 			}
 		},
