@@ -179,7 +179,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			}
 			clusterName := logicalcluster.From(cobj)
 
-			// slow path: take write lock to add a new cluster (unless it appeared in the meantime).
+			// check if cluster already exists before creating. There is small chance for rance but its ok.
 			if _, err := p.clusters.Get(ctx, clusterName.String()); err == nil {
 				p.log.Info("cluster already exists, skipping creation", "cluster", clusterName)
 				return

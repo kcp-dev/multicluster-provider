@@ -128,10 +128,12 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 	}, nil
 }
 
+// Get returns the cluster with the given name as a cluster.Cluster.
 func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
 	return p.clusters.Get(ctx, clusterName)
 }
 
+// IndexField adds an indexer to the clusters managed by this provider.
 func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
 	return p.clusters.IndexField(ctx, obj, field, extractValue)
 }
@@ -142,7 +144,6 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	p.context = ctx
 	// Create a child context we can cancel when the APIExportEndpointSlice goes away.
 	ctx, cancel := context.WithCancel(ctx)
-	logger := log.FromContext(ctx)
 
 	informer, err := p.cache.GetInformer(ctx, &apisv1alpha1.APIExportEndpointSlice{})
 	if err != nil {
@@ -153,16 +154,16 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			es := obj.(*apisv1alpha1.APIExportEndpointSlice)
-			logger.Info("added APIExportEndpointSlice", "name", es.Name)
+			p.log.Info("added APIExportEndpointSlice", "name", es.Name)
 			p.update(es)
 		},
 		UpdateFunc: func(oldObj any, newObj any) {
 			es := newObj.(*apisv1alpha1.APIExportEndpointSlice)
-			logger.Info("updated APIExportEndpointSlice", "name", es.Name)
+			p.log.Info("updated APIExportEndpointSlice", "name", es.Name)
 			p.update(es)
 		},
 		DeleteFunc: func(obj any) {
-			logger.Info("deleted APIExportEndpointSlice, stopping provider")
+			p.log.Info("deleted APIExportEndpointSlice, stopping provider")
 			cancel()
 		},
 	})
@@ -175,18 +176,18 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	g.Go(func() error {
 		<-ctx.Done()
 		err := informer.RemoveEventHandler(handler)
-		logger.Info("removed cache event handler")
+		p.log.Info("removed cache event handler")
 		return err
 	})
 
 	g.Go(func() error {
 		err := p.cache.Start(ctx)
-		logger.Info("cache stopped")
+		p.log.Info("cache stopped")
 		return err
 	})
 	g.Go(func() error {
 		for _, prov := range p.providers {
-			logger.Info("starting provider")
+			p.log.Info("starting provider")
 			if err := prov.Start(ctx, aware); err != nil {
 				return fmt.Errorf("failed to start provider: %w", err)
 			}
@@ -198,7 +199,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 		return fmt.Errorf("failed to wait for sync")
 	}
 
-	logger.V(4).Info("caches have synced")
+	p.log.V(4).Info("caches have synced")
 
 	return g.Wait()
 }
@@ -250,13 +251,12 @@ func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
 	}
 
 	// Clean up providers that are no longer present in the endpoint slice.
-	for id, _ := range p.providers {
+	for id := range p.providers {
 		if _, exists := current[id]; exists {
 			continue
 		}
 		p.log.Info("stopping provider for removed endpoint", "id", id)
 		delete(p.providers, id)
-
 	}
 }
 
