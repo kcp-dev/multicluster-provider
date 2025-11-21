@@ -394,12 +394,12 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				lock.RLock()
 				defer lock.RUnlock()
-				return engaged.Has(fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster)), fmt.Sprintf("failed to see the consumer workspace %q as a cluster: %v", consumerWS.Spec.Cluster, engaged.List())
+				return engaged.Has(consumerWS.Spec.Cluster), fmt.Sprintf("failed to see the consumer workspace %q as a cluster: %v", consumerWS.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see the consumer workspace %q as a cluster", consumer)
 		})
 
 		It("sees only the stone in the consumer clusters", func() {
-			consumerCl, err := mgr.GetCluster(ctx, fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster))
+			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
 			Expect(err).NotTo(HaveOccurred())
 
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
@@ -419,7 +419,7 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 		})
 
 		It("sees only the stone as grey thing in the consumer clusters", func() {
-			consumerCl, err := mgr.GetCluster(ctx, fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster))
+			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
 			Expect(err).NotTo(HaveOccurred())
 
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
