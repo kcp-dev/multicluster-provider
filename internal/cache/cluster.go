@@ -18,7 +18,6 @@ package cache
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -183,5 +182,6 @@ func (c *ScopedCluster) GetAPIReader() client.Reader {
 
 // Start starts the cluster.
 func (c *ScopedCluster) Start(ctx context.Context) error {
-	return errors.New("scoped cluster cannot be started")
+	<-ctx.Done()
+	return nil
 }
