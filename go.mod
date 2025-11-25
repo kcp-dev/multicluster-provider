@@ -2,6 +2,9 @@ module github.com/kcp-dev/multicluster-provider
 
 go 1.24.0
 
+// Point to non-released version with clusters.Clusters support.
+replace sigs.k8s.io/multicluster-runtime => sigs.k8s.io/multicluster-runtime v0.21.0-alpha.9.0.20251120090003-9e4e256f374e
+
 require (
 	github.com/go-logr/logr v1.4.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7

@@ -80,6 +80,8 @@ func NewWildcardCache(config *rest.Config, opts cache.Options) (WildcardCache, e
 			Unstructured: make(map[schema.GroupVersionKind]k8scache.SharedIndexInformer),
 			Metadata:     make(map[schema.GroupVersionKind]k8scache.SharedIndexInformer),
 		},
+		indexTrackerLock: sync.RWMutex{},
+		indexTracker:     make(map[string]struct{}),
 
 		readerFailOnMissingInformer: opts.ReaderFailOnMissingInformer,
 	}
@@ -123,6 +125,9 @@ type wildcardCache struct {
 	scheme  *runtime.Scheme
 	mapper  apimeta.RESTMapper
 	tracker informerTracker
+
+	indexTrackerLock sync.RWMutex
+	indexTracker     map[string]struct{}
 
 	readerFailOnMissingInformer bool
 }
@@ -181,7 +186,18 @@ func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIn
 
 // IndexField adds an index for the given object kind.
 func (c *wildcardCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	return c.Cache.IndexField(ctx, obj, "cluster/"+field, func(obj client.Object) []string {
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	c.indexTrackerLock.Lock()
+	key := fmt.Sprintf("%s|%s", gvk.String(), field)
+	if _, exists := c.indexTracker[key]; exists {
+		// already indexed
+		c.indexTrackerLock.Unlock()
+		return nil
+	}
+	c.indexTracker[key] = struct{}{}
+	c.indexTrackerLock.Unlock()
+
+	return c.Cache.IndexField(ctx, obj, field, func(obj client.Object) []string {
 		keys := extractValue(obj)
 		withCluster := make([]string, len(keys)*2)
 		for i, key := range keys {

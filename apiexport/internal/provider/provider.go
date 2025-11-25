@@ -19,7 +19,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -36,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"sigs.k8s.io/multicluster-runtime/pkg/clusters"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
@@ -46,8 +46,7 @@ import (
 	mcrecorder "github.com/kcp-dev/multicluster-provider/internal/events/recorder"
 )
 
-var _ multicluster.Provider = &Provider{}
-var _ multicluster.ProviderRunnable = &Provider{}
+type Clusters = clusters.Clusters[cluster.Cluster]
 
 type Provider struct {
 	config *rest.Config
@@ -57,9 +56,8 @@ type Provider struct {
 
 	log logr.Logger
 
-	lock      sync.RWMutex
 	aware     multicluster.Aware
-	clusters  map[logicalcluster.Name]cluster.Cluster
+	clusters  *Clusters
 	cancelFns map[logicalcluster.Name]context.CancelFunc
 
 	recorderProvider *mcrecorder.Provider
@@ -97,7 +95,7 @@ type Options struct {
 // must point to a virtual workspace apiserver base path, i.e. up to but without
 // the '/clusters/*' suffix. This information can be extracted from the APIExport
 // status (deprecated) or an APIExportEndpointSlice status.
-func New(cfg *rest.Config, options Options) (*Provider, error) {
+func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
 		options.Scheme = scheme.Scheme
@@ -143,8 +141,8 @@ func New(cfg *rest.Config, options Options) (*Provider, error) {
 
 		log: *options.Log,
 
-		clusters:  map[logicalcluster.Name]cluster.Cluster{},
 		cancelFns: map[logicalcluster.Name]context.CancelFunc{},
+		clusters:  clusters,
 
 		recorderProvider: recorderProvider,
 	}, nil
@@ -173,18 +171,9 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			}
 			clusterName := logicalcluster.From(cobj)
 
-			// fast path: cluster exists already, there is nothing to do.
-			p.lock.RLock()
-			if _, ok := p.clusters[clusterName]; ok {
-				p.lock.RUnlock()
-				return
-			}
-			p.lock.RUnlock()
-
-			// slow path: take write lock to add a new cluster (unless it appeared in the meantime).
-			p.lock.Lock()
-			if _, ok := p.clusters[clusterName]; ok {
-				p.lock.Unlock()
+			// check if cluster already exists before creating. There is small chance for rance but its ok.
+			if _, err := p.clusters.Get(ctx, clusterName.String()); err == nil {
+				p.log.Info("cluster already exists, skipping creation", "cluster", clusterName)
 				return
 			}
 
@@ -194,24 +183,15 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			if err != nil {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 				cancel()
-				p.lock.Unlock()
 				return
 			}
-			p.clusters[clusterName] = cl
-			p.cancelFns[clusterName] = cancel
-			p.lock.Unlock()
-
-			p.log.Info("engaging cluster", "cluster", clusterName)
-			if err := p.aware.Engage(clusterCtx, clusterName.String(), cl); err != nil {
-				p.log.Error(err, "failed to engage cluster", "cluster", clusterName)
-				p.lock.Lock()
+			err = p.clusters.Add(clusterCtx, clusterName.String(), cl, p.aware)
+			if err != nil {
+				p.log.Error(err, "failed to add cluster", "cluster", clusterName)
 				cancel()
-				if p.clusters[clusterName] == cl {
-					delete(p.clusters, clusterName)
-					delete(p.cancelFns, clusterName)
-				}
-				p.lock.Unlock()
+				return
 			}
+			p.cancelFns[clusterName] = cancel
 		},
 		DeleteFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
@@ -236,12 +216,10 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				p.log.Error(err, "failed to get index keys", "cluster", clusterName)
 				return
 			}
-			if len(keys) == 0 {
-				p.lock.Lock()
 
+			if len(keys) == 0 {
 				// shut down individual event broadaster
 				if err := p.recorderProvider.StopBroadcaster(clusterName.String()); err != nil {
-					p.lock.Unlock()
 					p.log.Error(err, "failed to stop event broadcaster", "cluster", clusterName)
 					return
 				}
@@ -251,9 +229,8 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 					p.log.Info("disengaging cluster", "cluster", clusterName)
 					cancel()
 					delete(p.cancelFns, clusterName)
-					delete(p.clusters, clusterName)
+					p.clusters.Remove(clusterName.String())
 				}
-				p.lock.Unlock()
 			}
 		},
 	}); err != nil {
@@ -281,25 +258,4 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	}
 
 	return g.Wait()
-}
-
-// Get returns a [cluster.Cluster] by logical cluster name. Be aware that workspace paths do not work.
-func (p *Provider) Get(_ context.Context, name string) (cluster.Cluster, error) {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-	if cl, ok := p.clusters[logicalcluster.Name(name)]; ok {
-		return cl, nil
-	}
-
-	return nil, multicluster.ErrClusterNotFound
-}
-
-// GetWildcard returns the wildcard cache.
-func (p *Provider) GetWildcard() cache.Cache {
-	return p.cache
-}
-
-// IndexField indexes the given object by the given field on all engaged clusters, current and future.
-func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	return p.cache.IndexField(ctx, obj, field, extractValue)
 }
