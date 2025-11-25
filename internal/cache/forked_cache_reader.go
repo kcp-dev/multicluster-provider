@@ -212,7 +212,7 @@ func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName 
 	indexers := indexer.GetIndexers()
 	_, isClusterAware := indexers[kcpcache.ClusterAndNamespaceIndexName]
 	for idx, req := range requires {
-		indexName := fieldIndexName(isClusterAware, req.Field)
+		indexName := fieldIndexName(req.Field)
 		var indexedValue string
 		if isClusterAware {
 			indexedValue = keyToClusteredKey(clusterName.String(), namespace, req.Value)
@@ -270,10 +270,7 @@ func objectKeyToStoreKey(k client.ObjectKey) string {
 
 // fieldIndexName constructs the name of the index over the given field,
 // for use with an indexer.
-func fieldIndexName(clusterAware bool, field string) string {
-	if clusterAware {
-		return "field:cluster/" + field
-	}
+func fieldIndexName(field string) string {
 	return "field:" + field
 }
 

@@ -21,21 +21,22 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sync"
 
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/errgroup"
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"sigs.k8s.io/multicluster-runtime/pkg/clusters"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
-	"sigs.k8s.io/multicluster-runtime/providers/multi"
 
 	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 
@@ -50,7 +51,12 @@ var _ multicluster.ProviderRunnable = &Provider{}
 //
 // [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
 type Provider struct {
-	*multi.Provider
+	clusters *provider.Clusters
+	aware    multicluster.Aware
+	context  context.Context
+
+	providersLock sync.RWMutex
+	providers     map[string]*provider.Provider
 
 	log logr.Logger
 
@@ -65,6 +71,10 @@ type Options struct {
 	// Scheme is the scheme to use for the provider. If this is nil, it defaults
 	// to the client-go scheme.
 	Scheme *runtime.Scheme
+
+	// Log is the logger to use for the provider. If this is nil, it defaults
+	// to the controller-runtime default logger.
+	Log *logr.Logger
 
 	// ObjectToWatch is the object type that the provider watches via a /clusters/*
 	// wildcard endpoint to extract information about logical clusters joining and
@@ -82,10 +92,15 @@ type Options struct {
 func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
-		options.Scheme = scheme.Scheme
+		return nil, fmt.Errorf("scheme must be provided")
 	}
 	if options.ObjectToWatch == nil {
 		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
+	}
+
+	if options.Log == nil {
+		l := log.Log.WithName("kcp-apiexport-cluster-provider")
+		options.Log = &l
 	}
 
 	c, err := cache.New(cfg, cache.Options{
@@ -100,20 +115,35 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 		return nil, err
 	}
 
+	clusters := clusters.New[cluster.Cluster]()
 	return &Provider{
-		Provider: multi.New(multi.Options{}),
+		// func to pass into iner provider to lifecycle clusters
+		clusters:  &clusters,
+		providers: map[string]*provider.Provider{},
 
 		config: cfg,
 		scheme: options.Scheme,
 		object: options.ObjectToWatch,
 		cache:  c,
 
-		log: log.Log.WithName("kcp-apiexport-cluster-provider"),
+		log: *options.Log,
 	}, nil
+}
+
+// Get returns the cluster with the given name as a cluster.Cluster.
+func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+	return p.clusters.Get(ctx, clusterName)
+}
+
+// IndexField adds an indexer to the clusters managed by this provider.
+func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return p.clusters.IndexField(ctx, obj, field, extractValue)
 }
 
 // Start starts the provider and blocks.
 func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
+	p.aware = aware
+	p.context = ctx
 	// Create a child context we can cancel when the APIExportEndpointSlice goes away.
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -157,11 +187,6 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 		p.log.Info("cache stopped")
 		return err
 	})
-	g.Go(func() error {
-		err := p.Provider.Start(ctx, aware)
-		p.log.Info("provider stopped")
-		return err
-	})
 
 	if !p.cache.WaitForCacheSync(ctx) {
 		return fmt.Errorf("failed to wait for sync")
@@ -172,14 +197,27 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	return g.Wait()
 }
 
+// update will look into the given APIExportEndpointSlice and ensure that providers
+// are iniciated for every url. It reads every url and sets up a provider if needed for it,
+// and registers it inside current map. Finally, it cleans up any providers that are no longer
+// present in the endpoint slice (present in the providers but not in the current map).
 func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
-	currrent := map[string]struct{}{}
+	p.providersLock.Lock()
+	defer p.providersLock.Unlock()
+
+	if p.aware == nil {
+		p.log.Info("aware is not set yet, skipping update")
+		return
+	}
+
+	var current = make(map[string]bool) // currently registered providers
 
 	for _, endpoint := range es.Status.APIExportEndpoints {
 		id := HashAPIExportURL(endpoint.URL)
+		current[id] = true
+
 		// Skip already registered endpoints.
-		if _, exists := p.GetProvider(id); exists {
-			currrent[id] = struct{}{}
+		if _, exists := p.providers[id]; exists {
 			continue
 		}
 
@@ -188,30 +226,38 @@ func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
 		cfg := rest.CopyConfig(p.config)
 		cfg.Host = endpoint.URL
 
-		logger := p.log.WithValues("endpoint", id)
-		prov, err := provider.New(cfg, provider.Options{ObjectToWatch: p.object, Scheme: p.scheme, Log: &logger})
+		logger := p.log.WithValues("url", endpoint.URL)
+		prov, err := provider.New(cfg, p.clusters, provider.Options{
+			ObjectToWatch: p.object,
+			Scheme:        p.scheme,
+			Log:           &logger,
+		})
 		if err != nil {
 			p.log.Error(err, "failed to create provider")
 			continue
 		}
-		if err := p.AddProvider(id, prov); err != nil {
-			p.log.Error(err, "failed to add provider")
+
+		err = prov.Start(p.context, p.aware)
+		if err != nil {
+			p.log.Error(err, "failed to start provider")
 			continue
 		}
-		p.log.Info("added endpoint as new provider", "endpoint", id, "url", endpoint.URL)
-		currrent[id] = struct{}{}
+
+		p.providers[id] = prov
+		current[id] = true
 	}
 
-	for _, prefix := range p.ProviderNames() {
-		if _, exists := currrent[prefix]; !exists {
-			p.RemoveProvider(prefix)
-			p.log.Info("removed endpoint provider", "endpoint", prefix)
+	// Clean up providers that are no longer present in the endpoint slice.
+	for id := range p.providers {
+		if _, exists := current[id]; exists {
+			continue
 		}
+		p.log.Info("stopping provider for removed endpoint", "id", id)
+		delete(p.providers, id)
 	}
 }
 
 // HashAPIExportURL hashes an URL from an APIExportEndpointSlice status.
-// It can be used to address clusters by calling GetCluster with "<URL hash>#<logical cluster name>".
 func HashAPIExportURL(url string) string {
 	sha := sha256.New()
 	sha.Write([]byte(url))

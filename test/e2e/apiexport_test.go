@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -309,7 +310,9 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			providerConfig := rest.CopyConfig(kcpConfig)
 			providerConfig.Host += provider.RequestPath()
 			var err error
-			p, err = apiexport.New(providerConfig, "example.com", apiexport.Options{})
+			p, err = apiexport.New(providerConfig, "example.com", apiexport.Options{
+				Scheme: scheme.Scheme,
+			})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("waiting for discovery of the virtual workspace to show 'example.com'")
@@ -394,17 +397,17 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				lock.RLock()
 				defer lock.RUnlock()
-				return engaged.Has(fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster)), fmt.Sprintf("failed to see the consumer workspace %q as a cluster: %v", consumerWS.Spec.Cluster, engaged.List())
+				return engaged.Has(consumerWS.Spec.Cluster), fmt.Sprintf("failed to see the consumer workspace %q as a cluster: %v", consumerWS.Spec.Cluster, engaged.List())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see the consumer workspace %q as a cluster", consumer)
 		})
 
 		It("sees only the stone in the consumer clusters", func() {
-			consumerCl, err := mgr.GetCluster(ctx, fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster))
-			Expect(err).NotTo(HaveOccurred())
-
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
 				l := &unstructured.UnstructuredList{}
 				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+				consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
+				Expect(err).NotTo(HaveOccurred())
+
 				err = consumerCl.GetCache().List(ctx, l)
 				if err != nil {
 					return false, fmt.Sprintf("failed to list things in the consumer cluster cache: %v", err)
@@ -419,9 +422,8 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 		})
 
 		It("sees only the stone as grey thing in the consumer clusters", func() {
-			consumerCl, err := mgr.GetCluster(ctx, fmt.Sprintf("%s#%s", apiexport.HashAPIExportURL(vwEndpoint), consumerWS.Spec.Cluster))
+			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
 			Expect(err).NotTo(HaveOccurred())
-
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
 				l := &unstructured.UnstructuredList{}
 				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
