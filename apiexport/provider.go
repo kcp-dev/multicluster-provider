@@ -28,8 +28,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -92,15 +94,15 @@ type Options struct {
 func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
-		return nil, fmt.Errorf("scheme must be provided")
+		options.Scheme = scheme.Scheme
 	}
+
 	if options.ObjectToWatch == nil {
 		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
 	}
 
 	if options.Log == nil {
-		l := log.Log.WithName("kcp-apiexport-cluster-provider")
-		options.Log = &l
+		options.Log = ptr.To(log.Log.WithName("kcp-apiexport-cluster-provider"))
 	}
 
 	c, err := cache.New(cfg, cache.Options{
@@ -115,10 +117,9 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 		return nil, err
 	}
 
-	clusters := clusters.New[cluster.Cluster]()
 	return &Provider{
 		// func to pass into iner provider to lifecycle clusters
-		clusters:  &clusters,
+		clusters:  ptr.To(clusters.New[cluster.Cluster]()),
 		providers: map[string]*provider.Provider{},
 
 		config: cfg,
