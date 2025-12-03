@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -58,6 +59,9 @@ type cacheReader struct {
 	disableDeepCopy bool
 
 	clusterName logicalcluster.Name
+
+	// mu protects concurrent access to indexer methods
+	mu sync.RWMutex
 }
 
 // Get checks the indexer for the object and writes a copy of it if found.
@@ -68,7 +72,9 @@ func (c *cacheReader) Get(ctx context.Context, key client.ObjectKey, out client.
 	storeKey := objectKeyToStoreKey(key)
 
 	// create cluster-aware key for KCP
+	c.mu.RLock()
 	_, isClusterAware := c.indexer.GetIndexers()[kcpcache.ClusterAndNamespaceIndexName]
+	c.mu.RUnlock()
 	if isClusterAware && c.clusterName.Empty() {
 		return fmt.Errorf("cluster-aware cache requires a cluster in context")
 	}
@@ -132,7 +138,9 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 		return fmt.Errorf("continue list option is not supported by the cache")
 	}
 
+	c.mu.RLock()
 	_, isClusterAware := c.indexer.GetIndexers()[kcpcache.ClusterAndNamespaceIndexName]
+	c.mu.RUnlock()
 
 	switch {
 	case listOpts.FieldSelector != nil:
@@ -143,7 +151,7 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 		// list all objects by the field selector. If this is namespaced and we have one, ask for the
 		// namespaced index key. Otherwise, ask for the non-namespaced variant by using the fake "all namespaces"
 		// namespace.
-		objs, err = byIndexes(c.indexer, listOpts.FieldSelector.Requirements(), c.clusterName, listOpts.Namespace)
+		objs, err = byIndexes(c.indexer, listOpts.FieldSelector.Requirements(), c.clusterName, listOpts.Namespace, &c.mu)
 	case listOpts.Namespace != "":
 		if isClusterAware && !c.clusterName.Empty() {
 			objs, err = c.indexer.ByIndex(kcpcache.ClusterAndNamespaceIndexName, kcpcache.ClusterAndNamespaceIndexKey(c.clusterName, listOpts.Namespace))
@@ -203,14 +211,16 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 	return apimeta.SetList(out, runtimeObjs)
 }
 
-func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName logicalcluster.Name, namespace string) ([]interface{}, error) {
+func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName logicalcluster.Name, namespace string, mu *sync.RWMutex) ([]interface{}, error) {
 	var (
 		err  error
 		objs []interface{}
 		vals []string
 	)
+	mu.RLock()
 	indexers := indexer.GetIndexers()
 	_, isClusterAware := indexers[kcpcache.ClusterAndNamespaceIndexName]
+	mu.RUnlock()
 	for idx, req := range requires {
 		indexName := fieldIndexName(req.Field)
 		var indexedValue string
