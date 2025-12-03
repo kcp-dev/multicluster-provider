@@ -26,8 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
 
-	conditionsv1alpha1 "github.com/kcp-dev/sdk/apis/third_party/conditions/apis/conditions/v1alpha1"
-	"github.com/kcp-dev/sdk/apis/third_party/conditions/util/conditions"
+	conditionsv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/third_party/conditions/apis/conditions/v1alpha1"
+	"github.com/kcp-dev/kcp/sdk/apis/third_party/conditions/util/conditions"
 )
 
 // Eventually asserts that given condition will be met in waitFor time, periodically checking target function

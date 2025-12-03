@@ -22,7 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/kcp-dev/sdk/apis/core"
+	"github.com/kcp-dev/kcp/sdk/apis/core"
 
 	clusterclient "github.com/kcp-dev/multicluster-provider/client"
 	"github.com/kcp-dev/multicluster-provider/envtest"
