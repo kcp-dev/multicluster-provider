@@ -2,15 +2,12 @@ module github.com/kcp-dev/multicluster-provider
 
 go 1.24.0
 
-// Point to non-released version with clusters.Clusters support.
-replace sigs.k8s.io/multicluster-runtime => sigs.k8s.io/multicluster-runtime v0.21.0-alpha.9.0.20251120090003-9e4e256f374e
-
 require (
 	github.com/go-logr/logr v1.4.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kcp-dev/apimachinery/v2 v2.0.1-0.20250728122101-adbf20db3e51
-	github.com/kcp-dev/kcp/sdk v0.28.1
+	github.com/kcp-dev/apimachinery/v2 v2.29.0
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5
+	github.com/kcp-dev/sdk v0.29.0
 	github.com/martinlindhe/base36 v1.1.1
 	github.com/onsi/ginkgo/v2 v2.22.1
 	github.com/onsi/gomega v1.36.2
@@ -25,8 +22,8 @@ require (
 	k8s.io/client-go v0.34.1
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
-	sigs.k8s.io/controller-runtime v0.22.3
-	sigs.k8s.io/multicluster-runtime v0.22.0-beta.0.0.20251118095141-e15a9cfac31a
+	sigs.k8s.io/controller-runtime v0.22.4
+	sigs.k8s.io/multicluster-runtime v0.22.4-beta.1
 	sigs.k8s.io/yaml v1.6.0
 )
 
