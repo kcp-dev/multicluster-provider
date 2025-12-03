@@ -38,7 +38,7 @@ import (
 
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
-	kcpcorev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
+	kcpcorev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
 
 	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
