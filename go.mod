@@ -2,19 +2,13 @@ module github.com/kcp-dev/multicluster-provider
 
 go 1.24.0
 
-// 1.24 dependencies is leaking from sigs.k8s.io/controller-runtime. We need to pin few dependencies to
+// 1.24 dependencies is leaking from k8s.io/client-go. We need to pin few dependencies to
 // avoid issues until kcp is upgraded to go 1.24 as well.
-replace (
-	github.com/google/gnostic-models => github.com/google/gnostic-models v0.6.9
-	github.com/kcp-dev/client-go => github.com/kcp-dev/client-go v0.29.0
-	gopkg.in/yaml.v3 => gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api => k8s.io/api v0.33.5
-	k8s.io/apimachinery => k8s.io/apimachinery v0.33.5
-	k8s.io/client-go => k8s.io/client-go v0.33.5
-	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff
-	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.21.0
-	sigs.k8s.io/structured-merge-diff/v4 => sigs.k8s.io/structured-merge-diff/v4 v4.6.0
-)
+replace github.com/kcp-dev/client-go => github.com/kcp-dev/client-go v0.29.0
+
+replace k8s.io/client-go => k8s.io/client-go v0.33.5
+
+replace k8s.io/api => k8s.io/api v0.33.5
 
 require (
 	github.com/go-logr/logr v1.4.2
@@ -78,6 +72,7 @@ require (
 	go.uber.org/goleak v1.3.1-0.20241121203838-4ff5fa6529ee // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/oauth2 v0.29.0 // indirect
 	golang.org/x/term v0.32.0 // indirect
@@ -93,4 +88,5 @@ require (
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.6.0 // indirect
+	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
