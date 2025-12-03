@@ -67,7 +67,7 @@ func main() {
 		provider      *apiexport.Provider
 	)
 
-	pflag.StringVar(&endpointSlice, "endpointslice", "logicalcluster-apiexport-multicluster", "Set the APIExportEndpointSlice name to watch")
+	pflag.StringVar(&endpointSlice, "endpointslice", "logicalcluster.workspaces.kcp.dev", "Set the APIExportEndpointSlice name to watch")
 	pflag.Parse()
 
 	cfg := ctrl.GetConfigOrDie()
@@ -90,7 +90,7 @@ func main() {
 	entryLog.Info("Setting up manager")
 	opts := manager.Options{}
 
-	provider, err = apiexport.New(cfgVW, endpointSlice, apiexport.Options{})
+	provider, err = apiexport.New(cfg, endpointSlice, apiexport.Options{})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)
