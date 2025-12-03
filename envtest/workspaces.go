@@ -33,10 +33,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
+	"github.com/kcp-dev/kcp/sdk/apis/core"
+	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
+	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
-	"github.com/kcp-dev/sdk/apis/core"
-	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
-	tenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 
 	kcpclient "github.com/kcp-dev/multicluster-provider/client"
 )
