@@ -41,11 +41,11 @@ import (
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	kcpkubernetesclient "github.com/kcp-dev/client-go/kubernetes"
-	apisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
-	kcpcore "github.com/kcp-dev/kcp/sdk/apis/core"
-	corev1alpha1 "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
-	tenancyv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
 	"github.com/kcp-dev/logicalcluster/v3"
+	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	kcpcore "github.com/kcp-dev/sdk/apis/core"
+	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
+	tenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 
 	"github.com/kcp-dev/multicluster-provider/apiexport"
 )
@@ -63,11 +63,11 @@ func main() {
 	entryLog := log.Log.WithName("entrypoint")
 
 	var (
-		server   string
-		provider *apiexport.Provider
+		endpointSlice string
+		provider      *apiexport.Provider
 	)
 
-	pflag.StringVar(&server, "server", "", "Override for kubeconfig server URL")
+	pflag.StringVar(&endpointSlice, "endpointslice", "logicalcluster.workspaces.kcp.dev", "Set the APIExportEndpointSlice name to watch")
 	pflag.Parse()
 
 	cfg := ctrl.GetConfigOrDie()
@@ -86,15 +86,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if server != "" {
-		cfgVW.Host = server
-	}
-
 	// Setup a Manager, note that this not yet engages clusters, only makes them available.
 	entryLog.Info("Setting up manager")
 	opts := manager.Options{}
 
-	provider, err = apiexport.New(cfgVW, apiexport.Options{})
+	provider, err = apiexport.New(cfg, endpointSlice, apiexport.Options{})
 	if err != nil {
 		entryLog.Error(err, "unable to construct cluster provider")
 		os.Exit(1)
@@ -218,7 +214,7 @@ func main() {
 	if provider != nil {
 		entryLog.Info("Starting provider")
 		go func() {
-			if err := provider.Run(ctx, mgr); err != nil {
+			if err := provider.Start(ctx, mgr); err != nil {
 				entryLog.Error(err, "unable to run provider")
 				os.Exit(1)
 			}
