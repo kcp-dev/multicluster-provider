@@ -19,16 +19,20 @@ set -euo pipefail
 cd $(dirname $0)/..
 source hack/lib.sh
 
-make --no-print-directory _tools/boilerplate
+BOILERPLATE="$(UGET_PRINT_PATH=relative make --no-print-directory install-boilerplate)"
 
 echo "Checking file boilerplates…"
-_tools/boilerplate \
+
+"$BOILERPLATE" \
   -boilerplates hack/boilerplate \
   -exclude .github \
   -exclude internal/cache/forked_cache_reader.go \
   -exclude internal/events/recorder/forked_recorder.go \
-  -exclude envtest
-_tools/boilerplate -boilerplates hack/boilerplate/kubernetes \
+  -exclude envtest \
+  -exclude hack/uget.sh
+
+"$BOILERPLATE" \
+  -boilerplates hack/boilerplate/kubernetes \
   -exclude envtest/doc.go \
   -exclude envtest/eventually.go \
   -exclude envtest/scheme.go \
@@ -36,7 +40,8 @@ _tools/boilerplate -boilerplates hack/boilerplate/kubernetes \
   -exclude envtest/workspaces.go \
   internal/cache/forked_cache_reader.go \
   internal/events/recorder/forked_recorder.go
-_tools/boilerplate \
+
+"$BOILERPLATE" \
   -boilerplates hack/boilerplate \
   envtest/doc.go \
   envtest/eventually.go \
