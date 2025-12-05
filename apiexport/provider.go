@@ -88,9 +88,8 @@ type Options struct {
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
-// must point to a virtual workspace apiserver base path, i.e. up to but without
-// the '/clusters/*' suffix. This information can be extracted from the APIExport
-// status (deprecated) or an APIExportEndpointSlice status.
+// must point to a logical workspace apiserver base path. The virtual workspace
+// url is extract via the endpointSliceName and must not be set in the config as host.
 func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
