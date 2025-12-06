@@ -19,6 +19,7 @@ set -euo pipefail
 cd $(dirname $0)/..
 source hack/lib.sh
 
-TEST_KCP_ASSETS="${PWD}/_tools" \
-CGO_ENABLED=1 \
-  go_test unit_tests -short -tags "unit" -timeout 20m -race -v ./...
+export TEST_ASSET_KCP="$(UGET_PRINT_PATH=absolute make --no-print-directory install-kcp)"
+export CGO_ENABLED=1
+
+go_test unit_tests -short -tags "unit" -timeout 20m -race -v ./...

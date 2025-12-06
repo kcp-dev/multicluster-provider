@@ -22,88 +22,75 @@ GIT_HEAD ?= $(shell git log -1 --format=%H)
 GIT_VERSION = $(shell git describe --tags --always)
 BUILD_DEST ?= _build
 GOTOOLFLAGS ?= $(GOBUILDFLAGS) -ldflags '-w $(LDFLAGS)' $(GOTOOLFLAGS_EXTRA)
-GOARCH ?= $(shell go env GOARCH)
-GOOS ?= $(shell go env GOOS)
+
+export UGET_DIRECTORY = _tools
+export UGET_CHECKSUMS = hack/tools.checksums
+export UGET_VERSIONED_BINARIES = true
 
 .PHONY: all
 all: test
 
-GOLANGCI_LINT = _tools/golangci-lint
-GOLANGCI_LINT_VERSION = 2.3.0
-.PHONY: $(GOLANGCI_LINT)
-$(GOLANGCI_LINT):
-	@hack/download-tool.sh \
-	  https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-${GOOS}-${GOARCH}.tar.gz \
-	  golangci-lint \
-	  ${GOLANGCI_LINT_VERSION}
+.PHONY: clean-tools
+clean-tools:
+	rm -rf $(UGET_DIRECTORY)
+	@echo "Cleaned $(UGET_DIRECTORY)."
+
+BOILERPLATE_VERSION ?= 0.3.0
+GOLANGCI_LINT_VERSION ?= 2.3.0
+KCP_VERSION ?= 0.28.1
+WWHRD_VERSION ?= 06b99400ca6db678386ba5dc39bbbdcdadb664ff
+YQ_VERSION ?= 4.44.6
+
+.PHONY: install-boilerplate
+install-boilerplate:
+	@hack/uget.sh https://github.com/kubermatic-labs/boilerplate/releases/download/v{VERSION}/boilerplate_{VERSION}_{GOOS}_{GOARCH}.tar.gz boilerplate $(BOILERPLATE_VERSION)
+
+.PHONY: install-golangci-lint
+install-golangci-lint:
+	@hack/uget.sh https://github.com/golangci/golangci-lint/releases/download/v{VERSION}/golangci-lint-{VERSION}-{GOOS}-{GOARCH}.tar.gz golangci-lint $(GOLANGCI_LINT_VERSION)
 
 # wwhrd is installed as a Go module rather than from the provided
 # binaries because there is no arm64 binary available from the author.
 # See https://github.com/frapposelli/wwhrd/issues/141
+.PHONY: install-wwhrd
+install-wwhrd:
+	@GO_MODULE=true hack/uget.sh github.com/frapposelli/wwhrd wwhrd $(WWHRD_VERSION)
 
-WWHRD = _tools/wwhrd
-WWHRD_VERSION = 06b99400ca6db678386ba5dc39bbbdcdadb664ff
+.PHONY: install-kcp
+install-kcp:
+	@hack/uget.sh https://github.com/kcp-dev/kcp/releases/download/v{VERSION}/kcp_{VERSION}_{GOOS}_{GOARCH}.tar.gz kcp $(KCP_VERSION)
 
-.PHONY: $(WWHRD)
-$(WWHRD):
-	@GO_MODULE=true hack/download-tool.sh \
-	  github.com/frapposelli/wwhrd \
-	  wwhrd \
-	  ${WWHRD_VERSION}
+# This target can be used to conveniently update the checksums for all checksummed tools.
+# Combine with GOARCH to update for other archs, like "GOARCH=arm64 make update-tools".
 
-BOILERPLATE = _tools/boilerplate
-BOILERPLATE_VERSION = 0.3.0
+.PHONY: update-tools
+update-tools: UGET_UPDATE=true
+update-tools: clean-tools install-boilerplate install-golangci-lint install-kcp
 
-.PHONY: $(BOILERPLATE)
-$(BOILERPLATE):
-	@hack/download-tool.sh \
-	  https://github.com/kubermatic-labs/boilerplate/releases/download/v${BOILERPLATE_VERSION}/boilerplate_${BOILERPLATE_VERSION}_${GOOS}_${GOARCH}.tar.gz \
-	  boilerplate \
-	  ${BOILERPLATE_VERSION}
-
-YQ = _tools/yq
-YQ_VERSION = 4.44.6
-
-.PHONY: $(YQ)
-$(YQ):
-	@UNCOMPRESSED=true hack/download-tool.sh \
-	  https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_${GOOS}_${GOARCH} \
-	  yq \
-	  ${YQ_VERSION} \
-	  yq_*
-
-KCP = _tools/kcp
-KCP_VERSION = 0.28.1
-
-.PHONY: $(KCP)
-$(KCP):
-	@hack/download-tool.sh \
-	  https://github.com/kcp-dev/kcp/releases/download/v${KCP_VERSION}/kcp_${KCP_VERSION}_${GOOS}_${GOARCH}.tar.gz \
-	  kcp \
-	  ${KCP_VERSION}
-
-ENVTEST = _tools/setup-envtest
-ENVTEST_VERSION = release-0.19
+GOLANGCI_LINT = $(ROOT_DIR)/$(UGET_DIRECTORY)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 .PHONY: lint
-lint: $(GOLANGCI_LINT)
-	$(GOLANGCI_LINT) run \
-		--verbose \
-		--print-resources-usage \
-		./...
+lint: install-golangci-lint
+	@if [ -n "$(WHAT)" ]; then \
+	  $(GOLANGCI_LINT) run --verbose -c $(ROOT_DIR)/.golangci.yaml $(WHAT); \
+	else \
+	  for MOD in . $$(git ls-files '**/go.mod' | sed 's,/go.mod,,'); do \
+		(cd $$MOD; echo "Linting ./$$MOD ..."; $(GOLANGCI_LINT) run --verbose -c $(ROOT_DIR)/.golangci.yaml);\
+	  done; \
+	fi
 
-fix-lint: $(GOLANGCI_LINT)
-	GOLANGCI_LINT_FLAGS="--fix" $(MAKE) lint
 .PHONY: fix-lint
+fix-lint: install-golangci-lint
+	GOLANGCI_LINT_FLAGS="--fix" $(MAKE) lint
 
 .PHONY: imports
 imports: WHAT ?=
-imports: $(GOLANGCI_LINT)
+imports: install-golangci-lint
 	@if [ -n "$(WHAT)" ]; then \
 	  $(GOLANGCI_LINT) fmt --enable gci -c $(ROOT_DIR)/.golangci.yaml $(WHAT); \
 	else \
 	  for MOD in . $$(git ls-files '**/go.mod' | sed 's,/go.mod,,'); do \
-		(cd $$MOD; $(GOLANGCI_LINT) fmt --enable gci -c $(ROOT_DIR)/.golangci.yaml);\
+		(cd $$MOD; echo "Fixing ./$$MOD ..."; $(GOLANGCI_LINT) fmt --enable gci -c $(ROOT_DIR)/.golangci.yaml);\
 	  done; \
 	fi
 
@@ -113,5 +100,5 @@ verify:
 	./hack/verify-licenses.sh
 
 .PHONY: test
-test: $(KCP)
+test:
 	./hack/run-tests.sh

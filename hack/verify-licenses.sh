@@ -19,10 +19,10 @@ set -euo pipefail
 cd $(dirname $0)/..
 source hack/lib.sh
 
-make --no-print-directory _tools/wwhrd
-
+echo "Vendoring dependencies…"
 go mod vendor
 
 echo "Checking licenses…"
-_tools/wwhrd check -q
+WWHRD="$(UGET_PRINT_PATH=relative make --no-print-directory install-wwhrd)"
+"$WWHRD" check -q
 echo "Check successful."
