@@ -5,9 +5,9 @@ go 1.24.0
 require (
 	github.com/go-logr/logr v1.4.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/kcp-dev/apimachinery/v2 v2.29.0
+	github.com/kcp-dev/apimachinery/v2 v2.29.1-0.20251209121225-cf3c0b624983
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5
-	github.com/kcp-dev/sdk v0.29.0
+	github.com/kcp-dev/sdk v0.28.1-0.20251209130449-436a0347809b
 	github.com/martinlindhe/base36 v1.1.1
 	github.com/onsi/ginkgo/v2 v2.22.1
 	github.com/onsi/gomega v1.36.2
@@ -16,10 +16,10 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/sync v0.14.0
 	golang.org/x/sys v0.33.0
-	k8s.io/api v0.34.1
-	k8s.io/apiextensions-apiserver v0.34.1
-	k8s.io/apimachinery v0.34.1
-	k8s.io/client-go v0.34.1
+	k8s.io/api v0.34.2
+	k8s.io/apiextensions-apiserver v0.34.2
+	k8s.io/apimachinery v0.34.2
+	k8s.io/client-go v0.34.2
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	sigs.k8s.io/controller-runtime v0.22.4
