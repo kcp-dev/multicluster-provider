@@ -44,10 +44,19 @@ import (
 
 	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 	mcrecorder "github.com/kcp-dev/multicluster-provider/internal/events/recorder"
+	"github.com/kcp-dev/multicluster-provider/internal/hooks"
 )
 
+// Clusters is an alias for clusters.Clusters[cluster.Cluster].
 type Clusters = clusters.Clusters[cluster.Cluster]
 
+// Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that represents each [logical cluster]
+// (in the kcp sense) exposed via a virtual workspace as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
+//
+// This is internal representation of the provider, use apiexport.Provider for the public one.
+// This provider deals with single virtual workspace, representinged by the rest.Config provided.
+//
+// [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
 type Provider struct {
 	config *rest.Config
 	scheme *runtime.Scheme
@@ -59,6 +68,7 @@ type Provider struct {
 	aware     multicluster.Aware
 	clusters  *Clusters
 	cancelFns map[logicalcluster.Name]context.CancelFunc
+	hooks     hooks.Hooks
 
 	recorderProvider *mcrecorder.Provider
 }
@@ -89,6 +99,9 @@ type Options struct {
 	// returns whether or not this is an "owned" broadcaster, and as such should be
 	// stopped with the manager.
 	makeBroadcaster mcrecorder.EventBroadcasterProducer
+
+	// Hooks are lifecycle hooks for logical clusters managed by this provider.
+	Hooks hooks.Hooks
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
@@ -138,8 +151,8 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 		scheme: options.Scheme,
 		cache:  options.WildcardCache,
 		object: options.ObjectToWatch,
-
-		log: *options.Log,
+		hooks:  options.Hooks,
+		log:    *options.Log,
 
 		cancelFns: map[logicalcluster.Name]context.CancelFunc{},
 		clusters:  clusters,
@@ -192,6 +205,15 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				return
 			}
 			p.cancelFns[clusterName] = cancel
+			p.hooks.RunOnAdd(cobj)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			cobj, ok := newObj.(client.Object)
+			if !ok {
+				klog.Errorf("unexpected object type %T", newObj)
+				return
+			}
+			p.hooks.RunOnUpdate(oldObj.(client.Object), cobj)
 		},
 		DeleteFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
@@ -230,6 +252,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 					cancel()
 					delete(p.cancelFns, clusterName)
 					p.clusters.Remove(clusterName.String())
+					p.hooks.RunOnDelete(cobj)
 				}
 			}
 		},
