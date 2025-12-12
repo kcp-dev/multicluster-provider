@@ -99,7 +99,7 @@ func (p *pathHook) OnAdd(obj client.Object) {
 	cluster := logicalcluster.From(obj)
 
 	path, ok := obj.GetAnnotations()[kcpcore.LogicalClusterPathAnnotationKey]
-	if !ok {
+	if !ok || path == "" {
 		return
 	}
 

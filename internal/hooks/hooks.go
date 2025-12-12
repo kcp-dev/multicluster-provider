@@ -23,9 +23,10 @@ import (
 // Hooks is a collection of Hook.
 type Hooks []Hook
 
-// Hook are lifecycle hook for logical clusters managed by a provider.
-// It allows to react to addition, update and deletion of logical clusters.
-// Hooks should be treat safe and non-blocking.
+// Hook are lifecycle hook for logical clusters managed by a provider and presented as
+// apibindings via APIExport virtual workspace.
+// It allows to react to addition, update and deletion of apibindings (consumers) in the provider.
+// Hooks should be implemented with care to avoid blocking the main reconciliation loop.
 type Hook interface {
 	// OnAdd is called when a new logical cluster is added.
 	OnAdd(obj client.Object)

@@ -88,7 +88,8 @@ type Options struct {
 	// the same endpoint semantics.
 	ObjectToWatch client.Object
 
-	// Hooks are lifecycle hook, ran for each logical cluster in the provider.
+	// Hooks are lifecycle hook, ran for each logical cluster in the provider represented
+	// by apibinding object.
 	Hooks hooks.Hooks
 }
 

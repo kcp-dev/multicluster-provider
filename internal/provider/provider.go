@@ -100,7 +100,8 @@ type Options struct {
 	// stopped with the manager.
 	makeBroadcaster mcrecorder.EventBroadcasterProducer
 
-	// Hooks are lifecycle hooks for logical clusters managed by this provider.
+	// Hooks are lifecycle hooks for logical clusters managed by this provider represented
+	// by apibinding object.
 	Hooks hooks.Hooks
 }
 
