@@ -98,8 +98,8 @@ type pathHook struct {
 func (p *pathHook) OnAdd(obj client.Object) {
 	cluster := logicalcluster.From(obj)
 
-	path, ok := obj.GetAnnotations()[kcpcore.LogicalClusterPathAnnotationKey]
-	if !ok || path == "" {
+	path := obj.GetAnnotations()[kcpcore.LogicalClusterPathAnnotationKey]
+	if path == "" {
 		return
 	}
 
