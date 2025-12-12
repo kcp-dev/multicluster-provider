@@ -77,7 +77,8 @@ func TestPathStore(t *testing.T) {
 		for _, td := range testData {
 			clusterName := logicalcluster.Name(td.cluster)
 			store.Add(td.path, clusterName)
-			require.True(t, store.Has(td.path), "path should exist: %s", td.path)
+			_, exists := store.Get(td.path)
+			require.True(t, exists, "path %s should exist in store", td.path)
 
 			// Verify we can retrieve the cluster
 			retrievedCluster, exists := store.Get(td.path)
@@ -144,7 +145,8 @@ func TestPathStore(t *testing.T) {
 				clusterName := logicalcluster.Name(tc.cluster)
 				scenarioStore.Add(tc.path, clusterName)
 
-				require.True(t, scenarioStore.Has(tc.path))
+				_, exists := scenarioStore.Get(tc.path)
+				require.True(t, exists)
 				retrieved, exists := scenarioStore.Get(tc.path)
 				require.True(t, exists)
 				require.Equal(t, clusterName, retrieved)

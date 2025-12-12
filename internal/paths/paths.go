@@ -50,14 +50,6 @@ func (p *Store) Remove(path string) {
 	delete(p.paths, path)
 }
 
-// Has returns true if the path exists in the store.
-func (p *Store) Has(path string) bool {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-	_, exists := p.paths[path]
-	return exists
-}
-
 // Get returns the cluster name for the given path.
 func (p *Store) Get(path string) (logicalcluster.Name, bool) {
 	p.lock.RLock()
