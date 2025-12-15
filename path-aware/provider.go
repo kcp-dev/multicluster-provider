@@ -29,13 +29,13 @@ import (
 	kcpcore "github.com/kcp-dev/sdk/apis/core"
 
 	provider "github.com/kcp-dev/multicluster-provider/apiexport"
-	"github.com/kcp-dev/multicluster-provider/internal/hooks"
+	"github.com/kcp-dev/multicluster-provider/internal/handlers"
 	"github.com/kcp-dev/multicluster-provider/internal/paths"
 )
 
 var _ multicluster.Provider = &Provider{}
 var _ multicluster.ProviderRunnable = &Provider{}
-var _ hooks.Hook = &pathHook{}
+var _ handlers.Handler = &pathHandler{}
 
 // Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that represents each [logical cluster]
 // (in the kcp sense) exposed via a APIExport virtual workspace as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
@@ -55,10 +55,10 @@ type Provider struct {
 func New(cfg *rest.Config, endpointSliceName string, options provider.Options) (*Provider, error) {
 	store := paths.New()
 
-	h := &pathHook{
+	h := &pathHandler{
 		pathStore: store,
 	}
-	options.Hooks = append(options.Hooks, h)
+	options.Handlers = append(options.Handlers, h)
 
 	p, err := provider.New(cfg, endpointSliceName, options)
 	if err != nil {
@@ -91,11 +91,11 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	return p.Provider.Start(ctx, aware)
 }
 
-type pathHook struct {
+type pathHandler struct {
 	pathStore *paths.Store
 }
 
-func (p *pathHook) OnAdd(obj client.Object) {
+func (p *pathHandler) OnAdd(obj client.Object) {
 	cluster := logicalcluster.From(obj)
 
 	path := obj.GetAnnotations()[kcpcore.LogicalClusterPathAnnotationKey]
@@ -106,11 +106,11 @@ func (p *pathHook) OnAdd(obj client.Object) {
 	p.pathStore.Add(path, cluster)
 }
 
-func (p *pathHook) OnUpdate(oldObj, newObj client.Object) {
+func (p *pathHandler) OnUpdate(oldObj, newObj client.Object) {
 	// Not used.
 }
 
-func (p *pathHook) OnDelete(obj client.Object) {
+func (p *pathHandler) OnDelete(obj client.Object) {
 	path, ok := obj.GetAnnotations()[kcpcore.LogicalClusterPathAnnotationKey]
 	if !ok {
 		return

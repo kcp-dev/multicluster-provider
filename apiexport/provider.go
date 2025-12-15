@@ -42,7 +42,7 @@ import (
 
 	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 
-	"github.com/kcp-dev/multicluster-provider/internal/hooks"
+	"github.com/kcp-dev/multicluster-provider/internal/handlers"
 	"github.com/kcp-dev/multicluster-provider/internal/provider"
 )
 
@@ -61,8 +61,8 @@ type Provider struct {
 	providersLock sync.RWMutex
 	providers     map[string]*provider.Provider
 
-	log   logr.Logger
-	hooks hooks.Hooks
+	log      logr.Logger
+	handlers handlers.Handlers
 
 	config *rest.Config
 	scheme *runtime.Scheme
@@ -88,9 +88,9 @@ type Options struct {
 	// the same endpoint semantics.
 	ObjectToWatch client.Object
 
-	// Hooks are lifecycle hook, ran for each logical cluster in the provider represented
+	// Handlers are lifecycle handlers, ran for each logical cluster in the provider represented
 	// by apibinding object.
-	Hooks hooks.Hooks
+	Handlers handlers.Handlers
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
@@ -133,8 +133,8 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 		object: options.ObjectToWatch,
 		cache:  c,
 
-		log:   *options.Log,
-		hooks: options.Hooks,
+		log:      *options.Log,
+		handlers: options.Handlers,
 	}, nil
 }
 
@@ -239,7 +239,7 @@ func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
 			ObjectToWatch: p.object,
 			Scheme:        p.scheme,
 			Log:           &logger,
-			Hooks:         p.hooks,
+			Handlers:      p.handlers,
 		})
 		if err != nil {
 			p.log.Error(err, "failed to create provider")

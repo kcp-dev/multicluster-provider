@@ -14,20 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package hooks
+package handlers
 
 import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Hooks is a collection of Hook.
-type Hooks []Hook
+// Handlers is a collection of Handler.
+type Handlers []Handler
 
-// Hook are lifecycle hook for logical clusters managed by a provider and presented as
+// Handler are lifecycle hook for logical clusters managed by a provider and presented as
 // apibindings via APIExport virtual workspace.
 // It allows to react to addition, update and deletion of apibindings (consumers) in the provider.
-// Hooks should be implemented with care to avoid blocking the main reconciliation loop.
-type Hook interface {
+// Handlers should be implemented with care to avoid blocking the main reconciliation loop.
+type Handler interface {
 	// OnAdd is called when a new logical cluster is added.
 	OnAdd(obj client.Object)
 
@@ -38,23 +38,23 @@ type Hook interface {
 	OnDelete(obj client.Object)
 }
 
-// RunOnAdd runs OnAdd on all hooks.
-func (h Hooks) RunOnAdd(obj client.Object) {
-	for _, hook := range h {
-		hook.OnAdd(obj)
+// RunOnAdd runs OnAdd on all handlers.
+func (h Handlers) RunOnAdd(obj client.Object) {
+	for _, handler := range h {
+		handler.OnAdd(obj)
 	}
 }
 
-// RunOnUpdate runs OnUpdate on all hooks.
-func (h Hooks) RunOnUpdate(oldObj, newObj client.Object) {
-	for _, hook := range h {
-		hook.OnUpdate(oldObj, newObj)
+// RunOnUpdate runs OnUpdate on all handlers.
+func (h Handlers) RunOnUpdate(oldObj, newObj client.Object) {
+	for _, handler := range h {
+		handler.OnUpdate(oldObj, newObj)
 	}
 }
 
-// RunOnDelete runs OnDelete on all hooks.
-func (h Hooks) RunOnDelete(obj client.Object) {
-	for _, hook := range h {
-		hook.OnDelete(obj)
+// RunOnDelete runs OnDelete on all handlers.
+func (h Handlers) RunOnDelete(obj client.Object) {
+	for _, handler := range h {
+		handler.OnDelete(obj)
 	}
 }

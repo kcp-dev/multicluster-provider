@@ -44,7 +44,7 @@ import (
 
 	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
 	mcrecorder "github.com/kcp-dev/multicluster-provider/internal/events/recorder"
-	"github.com/kcp-dev/multicluster-provider/internal/hooks"
+	"github.com/kcp-dev/multicluster-provider/internal/handlers"
 )
 
 // Clusters is an alias for clusters.Clusters[cluster.Cluster].
@@ -68,7 +68,7 @@ type Provider struct {
 	aware     multicluster.Aware
 	clusters  *Clusters
 	cancelFns map[logicalcluster.Name]context.CancelFunc
-	hooks     hooks.Hooks
+	handlers  handlers.Handlers
 
 	recorderProvider *mcrecorder.Provider
 }
@@ -85,7 +85,7 @@ type Options struct {
 
 	// ObjectToWatch is the object type that the provider watches via a /clusters/*
 	// wildcard endpoint to extract information about logical clusters joining and
-	// leaving the "fleet" of (logical) clusters in kcp. If this is nil, it defaults
+	// leaving the "fleet" of (logical) clustergit pushs in kcp. If this is nil, it defaults
 	// to [apisv1alpha1.APIBinding]. This might be useful when using this provider
 	// against custom virtual workspaces that are not the APIExport one but share
 	// the same endpoint semantics.
@@ -100,9 +100,9 @@ type Options struct {
 	// stopped with the manager.
 	makeBroadcaster mcrecorder.EventBroadcasterProducer
 
-	// Hooks are lifecycle hooks for logical clusters managed by this provider represented
+	// Handlers are lifecycle handlers for logical clusters managed by this provider represented
 	// by apibinding object.
-	Hooks hooks.Hooks
+	Handlers handlers.Handlers
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
@@ -148,12 +148,12 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 	}
 
 	return &Provider{
-		config: cfg,
-		scheme: options.Scheme,
-		cache:  options.WildcardCache,
-		object: options.ObjectToWatch,
-		hooks:  options.Hooks,
-		log:    *options.Log,
+		config:   cfg,
+		scheme:   options.Scheme,
+		cache:    options.WildcardCache,
+		object:   options.ObjectToWatch,
+		handlers: options.Handlers,
+		log:      *options.Log,
 
 		cancelFns: map[logicalcluster.Name]context.CancelFunc{},
 		clusters:  clusters,
@@ -206,7 +206,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				return
 			}
 			p.cancelFns[clusterName] = cancel
-			p.hooks.RunOnAdd(cobj)
+			p.handlers.RunOnAdd(cobj)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			cobj, ok := newObj.(client.Object)
@@ -214,7 +214,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				klog.Errorf("unexpected object type %T", newObj)
 				return
 			}
-			p.hooks.RunOnUpdate(oldObj.(client.Object), cobj)
+			p.handlers.RunOnUpdate(oldObj.(client.Object), cobj)
 		},
 		DeleteFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
@@ -253,7 +253,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 					cancel()
 					delete(p.cancelFns, clusterName)
 					p.clusters.Remove(clusterName.String())
-					p.hooks.RunOnDelete(cobj)
+					p.handlers.RunOnDelete(cobj)
 				}
 			}
 		},
