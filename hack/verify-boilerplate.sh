@@ -26,8 +26,8 @@ echo "Checking file boilerplates…"
 "$BOILERPLATE" \
   -boilerplates hack/boilerplate \
   -exclude .github \
-  -exclude internal/cache/forked_cache_reader.go \
-  -exclude internal/events/recorder/forked_recorder.go \
+  -exclude pkg/cache/forked_cache_reader.go \
+  -exclude pkg/events/recorder/forked_recorder.go \
   -exclude envtest \
   -exclude hack/uget.sh
 
@@ -38,8 +38,8 @@ echo "Checking file boilerplates…"
   -exclude envtest/scheme.go \
   -exclude envtest/testing.go \
   -exclude envtest/workspaces.go \
-  internal/cache/forked_cache_reader.go \
-  internal/events/recorder/forked_recorder.go
+  pkg/cache/forked_cache_reader.go \
+  pkg/events/recorder/forked_recorder.go
 
 "$BOILERPLATE" \
   -boilerplates hack/boilerplate \

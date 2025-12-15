@@ -33,7 +33,7 @@ import (
 
 	"github.com/kcp-dev/logicalcluster/v3"
 
-	mcrecorder "github.com/kcp-dev/multicluster-provider/internal/events/recorder"
+	mcrecorder "github.com/kcp-dev/multicluster-provider/pkg/events/recorder"
 )
 
 // NewScopedCluster constructs a new cluster.Cluster that operates on a specific logical cluster.

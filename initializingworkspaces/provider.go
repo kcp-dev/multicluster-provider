@@ -41,7 +41,7 @@ import (
 	"github.com/kcp-dev/logicalcluster/v3"
 	kcpcorev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 
-	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
+	mcpcache "github.com/kcp-dev/multicluster-provider/pkg/cache"
 )
 
 var _ multicluster.Provider = &Provider{}

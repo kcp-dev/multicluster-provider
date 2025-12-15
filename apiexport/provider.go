@@ -42,8 +42,8 @@ import (
 
 	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 
-	"github.com/kcp-dev/multicluster-provider/internal/handlers"
-	"github.com/kcp-dev/multicluster-provider/internal/provider"
+	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
+	"github.com/kcp-dev/multicluster-provider/pkg/provider"
 )
 
 var _ multicluster.Provider = &Provider{}
