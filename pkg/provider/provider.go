@@ -42,9 +42,9 @@ import (
 	"github.com/kcp-dev/logicalcluster/v3"
 	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 
-	mcpcache "github.com/kcp-dev/multicluster-provider/internal/cache"
-	mcrecorder "github.com/kcp-dev/multicluster-provider/internal/events/recorder"
-	"github.com/kcp-dev/multicluster-provider/internal/handlers"
+	mcpcache "github.com/kcp-dev/multicluster-provider/pkg/cache"
+	mcrecorder "github.com/kcp-dev/multicluster-provider/pkg/events/recorder"
+	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
 )
 
 // Clusters is an alias for clusters.Clusters[cluster.Cluster].

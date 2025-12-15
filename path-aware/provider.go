@@ -29,8 +29,8 @@ import (
 	kcpcore "github.com/kcp-dev/sdk/apis/core"
 
 	provider "github.com/kcp-dev/multicluster-provider/apiexport"
-	"github.com/kcp-dev/multicluster-provider/internal/handlers"
-	"github.com/kcp-dev/multicluster-provider/internal/paths"
+	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
+	"github.com/kcp-dev/multicluster-provider/pkg/paths"
 )
 
 var _ multicluster.Provider = &Provider{}
