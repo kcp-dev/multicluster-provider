@@ -41,9 +41,12 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/clusters"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
+	"github.com/kcp-dev/logicalcluster/v3"
 	kcpcorev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 
+	mcpcache "github.com/kcp-dev/multicluster-provider/pkg/cache"
+	"github.com/kcp-dev/multicluster-provider/pkg/events/recorder"
 	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
 	"github.com/kcp-dev/multicluster-provider/pkg/provider"
 )
@@ -236,6 +239,13 @@ func (p *Provider) update(wst *kcptenancyv1alpha1.WorkspaceType) {
 			Scheme:        p.scheme,
 			Log:           &logger,
 			Handlers:      p.handlers,
+
+			// ensure the generic provider builds a per-cluster cache instead of a wildcard-based
+			// cache, since this virtual workspace does not offer anything but logicalclusters on
+			// the wildcard endpoint
+			NewCluster: func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, _ *recorder.Provider) (*mcpcache.ScopedCluster, error) {
+				return mcpcache.NewScopedInitializingCluster(cfg, clusterName, wildcardCA, scheme)
+			},
 		})
 		if err != nil {
 			p.log.Error(err, "failed to create provider")

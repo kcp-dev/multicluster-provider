@@ -15,7 +15,7 @@ workspace.tenancy.kcp.io/example3 created
 Then, start the example controller by passing the virtual workspace URL to it:
 
 ```sh
-$ go run . --server=$(kubectl get workspacetype examples-initializingworkspaces-multicluster -o jsonpath="{.status.virtualWorkspaces[0].url}") --initializer=root:examples-initializingworkspaces-multicluster
+$ go run . --workspace-type=examples-initializingworkspaces-multicluster
 ```
 
 Observe the controller reconciling every logical cluster and creating the child workspace `initialized-workspace` and the `kcp-initializer-cm` ConfigMap in each workspace and removing the initializer when done.
