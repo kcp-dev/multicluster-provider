@@ -206,7 +206,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 }
 
 // update will look into the given APIExportEndpointSlice and ensure that providers
-// are iniciated for every url. It reads every url and sets up a provider if needed for it,
+// are initiated for every url. It reads every url and sets up a provider if needed for it,
 // and registers it inside current map. Finally, it cleans up any providers that are no longer
 // present in the endpoint slice (present in the providers but not in the current map).
 func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
