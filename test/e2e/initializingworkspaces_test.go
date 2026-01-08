@@ -111,25 +111,18 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 	})
 
 	It("sees both clusters with initializers", func() {
-		By("getting LogicalCluster for workspaces and their cluster names")
-		lc1 := &kcpcorev1alpha1.LogicalCluster{}
-		err := cli.Cluster(ws1Path).Get(ctx, client.ObjectKey{Name: "cluster"}, lc1)
-		Expect(err).NotTo(HaveOccurred())
-
-		lc2 := &kcpcorev1alpha1.LogicalCluster{}
-		err = cli.Cluster(ws2Path).Get(ctx, client.ObjectKey{Name: "cluster"}, lc2)
-		Expect(err).NotTo(HaveOccurred())
-		envtest.Eventually(GinkgoT(), func() (bool, string) {
-			return slices.Contains(lc1.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(initName)) && slices.Contains(lc2.Status.Initializers, kcpcorev1alpha1.LogicalClusterInitializer(initName)),
-				fmt.Sprintf("Initializer not set: %v", lc1.Status) + " " + fmt.Sprintf("%v", lc2.Status)
-		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see initializers in both clusters")
+		for _, cluster := range []logicalcluster.Path{ws1Path, ws2Path} {
+			lc := &kcpcorev1alpha1.LogicalCluster{}
+			err := cli.Cluster(cluster).Get(ctx, client.ObjectKey{Name: "cluster"}, lc)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lc.Status.Initializers).To(ContainElement(kcpcorev1alpha1.LogicalClusterInitializer(initName)))
+		}
 	})
 
 	Describe("with a multicluster provider and manager", func() {
 		var (
 			lock                sync.RWMutex
 			engaged             = sets.NewString()
-			p                   *initializingworkspaces.Provider
 			g                   *errgroup.Group
 			cancelGroup         context.CancelFunc
 			initializersLock    sync.RWMutex
@@ -137,27 +130,17 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 		)
 
 		BeforeAll(func() {
-			cli, err := clusterclient.New(kcpConfig, client.Options{})
-			Expect(err).NotTo(HaveOccurred())
 			By("creating a multicluster provider for initializing workspaces")
+			providerConfig := rest.CopyConfig(kcpConfig)
+			providerConfig.Host += clusterPath.RequestPath()
 
-			// Get the initializing workspaces virtual workspace URL
-			wt := &tenancyv1alpha1.WorkspaceType{}
-			err = cli.Cluster(clusterPath).Get(ctx, client.ObjectKey{Name: workspaceTypeName}, wt)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(wt.Status.VirtualWorkspaces).ToNot(BeEmpty())
-
-			vwConfig := rest.CopyConfig(kcpConfig)
-			vwConfig.Host = wt.Status.VirtualWorkspaces[0].URL
-
-			// Create the provider with the initializer name from the WorkspaceType
-			p, err = initializingworkspaces.New(vwConfig, initializingworkspaces.Options{
-				InitializerName: initName,
-			})
+			// Create the provider with the workspace type name, so it can begin watching
+			// it and reacting to the virtual workspace URLs in it.
+			p, err := initializingworkspaces.New(providerConfig, workspaceTypeName, initializingworkspaces.Options{})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating a manager that uses the provider")
-			mgr, err = mcmanager.New(vwConfig, p, mcmanager.Options{})
+			mgr, err = mcmanager.New(providerConfig, p, mcmanager.Options{})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating a reconciler for LogicalClusters")
