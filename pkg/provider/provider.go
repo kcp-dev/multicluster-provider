@@ -185,7 +185,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			}
 			clusterName := logicalcluster.From(cobj)
 
-			// check if cluster already exists before creating. There is small chance for rance but its ok.
+			// check if cluster already exists before creating. There is small chance for a race but it's ok.
 			if _, err := p.clusters.Get(ctx, clusterName.String()); err == nil {
 				p.log.Info("cluster already exists, skipping creation", "cluster", clusterName)
 				return
