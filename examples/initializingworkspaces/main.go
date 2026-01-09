@@ -64,22 +64,31 @@ func main() {
 		server            string
 		workspaceTypeName string
 		provider          *initializingworkspaces.Provider
-		verbosity         int
+		logLevel          string
 	)
 
 	pflag.StringVar(&server, "server", "", "Override for kubeconfig server URL")
 	pflag.StringVar(&workspaceTypeName, "workspace-type", "example", "Name of the WorkspaceType to watch")
-	pflag.IntVar(&verbosity, "v", 1, "Log verbosity level")
+	pflag.StringVar(&logLevel, "log-level", zapcore.InfoLevel.String(), "Log verbosity level")
 	pflag.Parse()
 
 	logOpts := zap.Options{
 		Development: true,
-		Level:       zapcore.Level(-verbosity),
 	}
+
+	zapLevel, err := zapcore.ParseLevel(logLevel)
+	if err == nil {
+		logOpts.Level = zapLevel
+	}
+
 	log.SetLogger(zap.New(zap.UseFlagOptions(&logOpts)))
+	entryLog := log.Log.WithName("entrypoint")
+
+	if err != nil {
+		entryLog.Error(err, "Invalid log level")
+	}
 
 	ctx := signals.SetupSignalHandler()
-	entryLog := log.Log.WithName("entrypoint")
 	cfg := ctrl.GetConfigOrDie()
 	cfg = rest.CopyConfig(cfg)
 
