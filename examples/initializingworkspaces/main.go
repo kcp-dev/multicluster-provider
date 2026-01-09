@@ -146,7 +146,7 @@ func main() {
 				// wait for the tenancy API to be available
 				if _, err := cl.GetRESTMapper().KindFor(tenancyv1alpha1.SchemeGroupVersion.WithResource("workspaces")); err != nil {
 					logger.Info("kcp tenancy API is not available yet, requeuing")
-					return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
+					return reconcile.Result{RequeueAfter: 1 * time.Second}, nil //nolint:nilerr
 				}
 
 				workspace := lc.Annotations[kcpcore.LogicalClusterPathAnnotationKey]

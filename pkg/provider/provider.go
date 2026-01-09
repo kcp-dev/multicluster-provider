@@ -74,6 +74,8 @@ type Provider struct {
 	recorderProvider *mcrecorder.Provider
 }
 
+// NewClusterFunc allows customizing the concrete cluster implementation used for
+// every engaged cluster.
 type NewClusterFunc func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, recorderProvider *mcrecorder.Provider) (*mcpcache.ScopedCluster, error)
 
 // Options are the options for creating a new instance of the apiexport provider.
@@ -104,7 +106,8 @@ type Options struct {
 	makeBroadcaster mcrecorder.EventBroadcasterProducer
 
 	// NewCluster allows to customize the cluster instance that is being created for
-	// each engaged cluster.
+	// each engaged cluster. If this is not set, it defaults to a ScopedCache that
+	// uses the wildcard endpoint for its cache.
 	NewCluster NewClusterFunc
 
 	// Handlers are lifecycle handlers for logical clusters managed by this provider represented
