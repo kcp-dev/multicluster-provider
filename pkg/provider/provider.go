@@ -65,13 +65,18 @@ type Provider struct {
 
 	log logr.Logger
 
-	aware     multicluster.Aware
-	clusters  *Clusters
-	cancelFns map[logicalcluster.Name]context.CancelFunc
-	handlers  handlers.Handlers
+	aware      multicluster.Aware
+	newCluster NewClusterFunc
+	clusters   *Clusters
+	cancelFns  map[logicalcluster.Name]context.CancelFunc
+	handlers   handlers.Handlers
 
 	recorderProvider *mcrecorder.Provider
 }
+
+// NewClusterFunc allows customizing the concrete cluster implementation used for
+// every engaged cluster.
+type NewClusterFunc func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, recorderProvider *mcrecorder.Provider) (*mcpcache.ScopedCluster, error)
 
 // Options are the options for creating a new instance of the apiexport provider.
 type Options struct {
@@ -100,6 +105,11 @@ type Options struct {
 	// stopped with the manager.
 	makeBroadcaster mcrecorder.EventBroadcasterProducer
 
+	// NewCluster allows to customize the cluster instance that is being created for
+	// each engaged cluster. If this is not set, it defaults to a ScopedCache that
+	// uses the wildcard endpoint for its cache.
+	NewCluster NewClusterFunc
+
 	// Handlers are lifecycle handlers for logical clusters managed by this provider represented
 	// by apibinding object.
 	Handlers handlers.Handlers
@@ -125,6 +135,10 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 	}
 	if options.ObjectToWatch == nil {
 		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
+	}
+
+	if options.NewCluster == nil {
+		options.NewCluster = mcpcache.NewScopedCluster
 	}
 
 	if options.makeBroadcaster == nil {
@@ -155,8 +169,9 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 		handlers: options.Handlers,
 		log:      *options.Log,
 
-		cancelFns: map[logicalcluster.Name]context.CancelFunc{},
-		clusters:  clusters,
+		cancelFns:  map[logicalcluster.Name]context.CancelFunc{},
+		clusters:   clusters,
+		newCluster: options.NewCluster,
 
 		recorderProvider: recorderProvider,
 	}, nil
@@ -193,7 +208,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 
 			// create new scoped cluster.
 			clusterCtx, cancel := context.WithCancel(ctx)
-			cl, err := mcpcache.NewScopedCluster(p.config, clusterName, p.cache, p.scheme, p.recorderProvider)
+			cl, err := p.newCluster(p.config, clusterName, p.cache, p.scheme, p.recorderProvider)
 			if err != nil {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 				cancel()
