@@ -158,13 +158,7 @@ func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIn
 		return nil, gvk, "", fmt.Errorf("failed to get REST mapping: %w", err)
 	}
 
-	infs := c.tracker.informersByType(obj)
-	c.tracker.lock.RLock()
-	inf, ok := infs[gvk]
-	c.tracker.lock.RUnlock()
-
-	// we need to create a new informer here.
-	if !ok {
+	if _, err := c.tracker.getInformerFor(gvk, obj); err != nil {
 		// we have been instructed to fail if the informer is missing.
 		if c.readerFailOnMissingInformer {
 			return nil, gvk, "", &cache.ErrResourceNotCached{}
@@ -181,16 +175,26 @@ func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIn
 		if _, err := c.Cache.GetInformer(context.TODO(), o.(client.Object)); err != nil {
 			return nil, gvk, "", fmt.Errorf("failed to create informer: %w", err)
 		}
+	}
 
-		// Now we should be able to find the informer.
-		infs := c.tracker.informersByType(obj)
-		c.tracker.lock.RLock()
-		inf, ok = infs[gvk]
-		c.tracker.lock.RUnlock()
+	inf, err := c.tracker.getInformerFor(gvk, obj)
+	if err != nil {
+		return nil, gvk, "", fmt.Errorf("failed to find newly started informer for %v: %w", gvk, err)
+	}
 
-		if !ok {
-			return nil, gvk, "", fmt.Errorf("failed to find newly started informer for %v", gvk)
-		}
+	// Wait for the cache and informers to be synced.
+	//
+	// This is usually done by the cache _however_ with the custom
+	// NewInformer during concurrent calls an informer can be returned
+	// before the cache is synced:
+	// goroutine A calls GetSharedInformer, informer is generated in
+	// .NewInformer and added to the tracker _but_ A called
+	// .Cache.GetInformer which waits for the cache; meanwhile goroutine
+	// B calls GetSharedInformer, gets the informer from the tracker and
+	// returns it to B before the cache has synced, resulting in
+	// B getting a not-yet-synced informer.
+	if c.Started() && !c.WaitForCacheSync(context.TODO()) {
+		return nil, gvk, "", fmt.Errorf("informer for %v failed to sync in time", gvk)
 	}
 
 	return inf, gvk, mapping.Scope.Name(), nil
