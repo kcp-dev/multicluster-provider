@@ -42,6 +42,7 @@ import (
 
 	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 
+	mcpcache "github.com/kcp-dev/multicluster-provider/pkg/cache"
 	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
 	"github.com/kcp-dev/multicluster-provider/pkg/provider"
 )
@@ -64,10 +65,11 @@ type Provider struct {
 	log      logr.Logger
 	handlers handlers.Handlers
 
-	config *rest.Config
-	scheme *runtime.Scheme
-	object client.Object
-	cache  cache.Cache
+	config        *rest.Config
+	scheme        *runtime.Scheme
+	object        client.Object
+	cache         cache.Cache
+	wildcardCache mcpcache.WildcardCache
 }
 
 // Options are the options for creating a new instance of the apiexport provider.
@@ -91,6 +93,15 @@ type Options struct {
 	// Handlers are lifecycle handlers, ran for each logical cluster in the provider represented
 	// by apibinding object.
 	Handlers handlers.Handlers
+
+	// WildcardCache is the wildcard cache to use for the underlying
+	// providers. If set this cache will be passed to the inner
+	// providers created per
+	// shard.
+	//
+	// NOTE: LOW LEVEL PRIMITIVE:
+	// Only use a custom WildcardCache here if you know what you are doing.
+	WildcardCache mcpcache.WildcardCache
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
@@ -128,10 +139,11 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 		clusters:  ptr.To(clusters.New[cluster.Cluster]()),
 		providers: map[string]*provider.Provider{},
 
-		config: cfg,
-		scheme: options.Scheme,
-		object: options.ObjectToWatch,
-		cache:  c,
+		config:        cfg,
+		scheme:        options.Scheme,
+		object:        options.ObjectToWatch,
+		cache:         c,
+		wildcardCache: options.WildcardCache,
 
 		log:      *options.Log,
 		handlers: options.Handlers,
@@ -240,6 +252,7 @@ func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
 			Scheme:        p.scheme,
 			Log:           &logger,
 			Handlers:      p.handlers,
+			WildcardCache: p.wildcardCache,
 		})
 		if err != nil {
 			p.log.Error(err, "failed to create provider")
