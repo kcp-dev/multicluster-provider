@@ -100,13 +100,9 @@ func NewWildcardCache(config *rest.Config, opts cache.Options) (WildcardCache, e
 			utilruntime.HandleError(fmt.Errorf("unable to add cluster name indexers: %w", err))
 		}
 
-		infs := ret.tracker.informersByType(obj)
-		ret.tracker.lock.Lock()
-		if _, ok := infs[gvk]; ok {
-			panic(fmt.Sprintf("informer for %s already exists", gvk))
+		if err := ret.tracker.setInformerFor(gvk, obj, inf); err != nil {
+			panic(err)
 		}
-		infs[gvk] = inf
-		ret.tracker.lock.Unlock()
 
 		return inf
 	}
@@ -240,4 +236,30 @@ func (t *informerTracker) informersByType(obj runtime.Object) map[schema.GroupVe
 	default:
 		return t.Structured
 	}
+}
+
+func (t *informerTracker) setInformerFor(gvk schema.GroupVersionKind, obj runtime.Object, inf k8scache.SharedIndexInformer) error {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	infs := t.informersByType(obj)
+	if _, ok := infs[gvk]; ok {
+		return fmt.Errorf("informer for %s already exists", gvk)
+	}
+	infs[gvk] = inf
+
+	return nil
+}
+
+func (t *informerTracker) getInformerFor(gvk schema.GroupVersionKind, obj runtime.Object) (k8scache.SharedIndexInformer, error) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	infs := t.informersByType(obj)
+	inf, ok := infs[gvk]
+	if !ok {
+		return nil, fmt.Errorf("informer for %s not found", gvk)
+	}
+
+	return inf, nil
 }
