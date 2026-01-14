@@ -130,6 +130,22 @@ type wildcardCache struct {
 	indexTracker     map[string]struct{}
 
 	readerFailOnMissingInformer bool
+
+	startedLock sync.RWMutex
+	started     bool
+}
+
+func (c *wildcardCache) Start(ctx context.Context) error {
+	c.startedLock.Lock()
+	c.started = true
+	c.startedLock.Unlock()
+	return c.Cache.Start(ctx)
+}
+
+func (c *wildcardCache) Started() bool {
+	c.startedLock.RLock()
+	defer c.startedLock.RUnlock()
+	return c.started
 }
 
 func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error) {
