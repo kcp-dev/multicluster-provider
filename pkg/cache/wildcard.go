@@ -25,6 +25,7 @@ import (
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -73,25 +74,13 @@ func NewWildcardCache(config *rest.Config, opts cache.Options) (WildcardCache, e
 	}
 
 	ret := &wildcardCache{
-		scheme: opts.Scheme,
-		mapper: opts.Mapper,
-		tracker: informerTracker{
-			Structured:   make(map[schema.GroupVersionKind]k8scache.SharedIndexInformer),
-			Unstructured: make(map[schema.GroupVersionKind]k8scache.SharedIndexInformer),
-			Metadata:     make(map[schema.GroupVersionKind]k8scache.SharedIndexInformer),
-		},
+		scheme:           opts.Scheme,
+		mapper:           opts.Mapper,
 		indexTrackerLock: sync.RWMutex{},
 		indexTracker:     make(map[string]struct{}),
-
-		readerFailOnMissingInformer: opts.ReaderFailOnMissingInformer,
 	}
 
 	opts.NewInformer = func(watcher k8scache.ListerWatcher, obj runtime.Object, duration time.Duration, indexers k8scache.Indexers) k8scache.SharedIndexInformer {
-		gvk, err := apiutil.GVKForObject(obj, opts.Scheme)
-		if err != nil {
-			panic(err)
-		}
-
 		inf := kcpinformers.NewSharedIndexInformer(watcher, obj, duration, indexers)
 		if err := inf.AddIndexers(k8scache.Indexers{
 			kcpcache.ClusterIndexName:             ClusterIndexFunc,
@@ -99,15 +88,6 @@ func NewWildcardCache(config *rest.Config, opts cache.Options) (WildcardCache, e
 		}); err != nil {
 			utilruntime.HandleError(fmt.Errorf("unable to add cluster name indexers: %w", err))
 		}
-
-		infs := ret.tracker.informersByType(obj)
-		ret.tracker.lock.Lock()
-		if _, ok := infs[gvk]; ok {
-			panic(fmt.Sprintf("informer for %s already exists", gvk))
-		}
-		infs[gvk] = inf
-		ret.tracker.lock.Unlock()
-
 		return inf
 	}
 
@@ -122,14 +102,11 @@ func NewWildcardCache(config *rest.Config, opts cache.Options) (WildcardCache, e
 
 type wildcardCache struct {
 	cache.Cache
-	scheme  *runtime.Scheme
-	mapper  apimeta.RESTMapper
-	tracker informerTracker
+	scheme *runtime.Scheme
+	mapper apimeta.RESTMapper
 
 	indexTrackerLock sync.RWMutex
 	indexTracker     map[string]struct{}
-
-	readerFailOnMissingInformer bool
 }
 
 func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error) {
@@ -146,42 +123,37 @@ func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIn
 		return nil, gvk, "", fmt.Errorf("failed to get REST mapping: %w", err)
 	}
 
-	infs := c.tracker.informersByType(obj)
-	c.tracker.lock.RLock()
-	inf, ok := infs[gvk]
-	c.tracker.lock.RUnlock()
-
-	// we need to create a new informer here.
-	if !ok {
-		// we have been instructed to fail if the informer is missing.
-		if c.readerFailOnMissingInformer {
-			return nil, gvk, "", &cache.ErrResourceNotCached{}
-		}
-
-		// Let's generate a new object from the chopped GVK, since the original obj might be of *List type.
+	var emptyObject client.Object
+	switch obj.(type) {
+	case runtime.Unstructured:
+		emptyObject = &unstructured.Unstructured{}
+		emptyObject.GetObjectKind().SetGroupVersionKind(gvk)
+	case *metav1.PartialObjectMetadata, *metav1.PartialObjectMetadataList:
+		emptyObject = &metav1.PartialObjectMetadata{}
+		emptyObject.GetObjectKind().SetGroupVersionKind(gvk)
+	default:
 		o, err := c.scheme.New(gvk)
 		if err != nil {
-			return nil, gvk, "", fmt.Errorf("failed to create object for GVK: %w", err)
+			return nil, gvk, "", fmt.Errorf("failed to create new object for GVK: %w", err)
 		}
-
-		// Call GetInformer, but we don't care about the output. We just need to make sure that our NewInformer
-		// func has been called, which registers the new informer in our tracker.
-		if _, err := c.Cache.GetInformer(context.TODO(), o.(client.Object)); err != nil {
-			return nil, gvk, "", fmt.Errorf("failed to create informer: %w", err)
-		}
-
-		// Now we should be able to find the informer.
-		infs := c.tracker.informersByType(obj)
-		c.tracker.lock.RLock()
-		inf, ok = infs[gvk]
-		c.tracker.lock.RUnlock()
-
+		var ok bool
+		emptyObject, ok = o.(client.Object)
 		if !ok {
-			return nil, gvk, "", fmt.Errorf("failed to find newly started informer for %v", gvk)
+			return nil, gvk, "", fmt.Errorf("runtime.Object returned from scheme is not a client.Object")
 		}
 	}
 
-	return inf, gvk, mapping.Scope.Name(), nil
+	inf, err := c.Cache.GetInformer(context.TODO(), emptyObject)
+	if err != nil {
+		return nil, gvk, "", fmt.Errorf("failed to get informer: %w", err)
+	}
+
+	sii, ok := inf.(k8scache.SharedIndexInformer)
+	if !ok {
+		return nil, gvk, "", fmt.Errorf("informer returned by cache is not a SharedIndexInformer")
+	}
+
+	return sii, gvk, mapping.Scope.Name(), nil
 }
 
 // IndexField adds an index for the given object kind.
@@ -206,22 +178,4 @@ func (c *wildcardCache) IndexField(ctx context.Context, obj client.Object, field
 		}
 		return withCluster
 	})
-}
-
-type informerTracker struct {
-	lock         sync.RWMutex
-	Structured   map[schema.GroupVersionKind]k8scache.SharedIndexInformer
-	Unstructured map[schema.GroupVersionKind]k8scache.SharedIndexInformer
-	Metadata     map[schema.GroupVersionKind]k8scache.SharedIndexInformer
-}
-
-func (t *informerTracker) informersByType(obj runtime.Object) map[schema.GroupVersionKind]k8scache.SharedIndexInformer {
-	switch obj.(type) {
-	case runtime.Unstructured:
-		return t.Unstructured
-	case *metav1.PartialObjectMetadata, *metav1.PartialObjectMetadataList:
-		return t.Metadata
-	default:
-		return t.Structured
-	}
 }
