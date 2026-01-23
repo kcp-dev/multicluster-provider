@@ -22,11 +22,13 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
 	"github.com/kcp-dev/logicalcluster/v3"
 )
 
@@ -53,39 +55,40 @@ func (c *scopedCache) IndexField(ctx context.Context, obj client.Object, field s
 	return c.base.IndexField(ctx, obj, field, extractValue)
 }
 
-// Get returns a single object from the cache.
-func (c *scopedCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+func (c *scopedCache) cacheReader(obj runtime.Object) (cacheReader, error) {
 	inf, gvk, scope, err := c.base.GetSharedInformer(obj)
 	if err != nil {
-		return fmt.Errorf("failed to get informer for %T %s: %w", obj, obj.GetObjectKind().GroupVersionKind(), err)
+		return cacheReader{}, fmt.Errorf("failed to get informer for %T %s: %w", obj, obj.GetObjectKind().GroupVersionKind(), err)
 	}
 
+	indexer := inf.GetIndexer()
+	_, isClusterAware := indexer.GetIndexers()[kcpcache.ClusterAndNamespaceIndexName]
 	cr := cacheReader{
-		indexer:          inf.GetIndexer(),
+		indexer:          indexer,
 		groupVersionKind: gvk,
 		scopeName:        scope,
 		disableDeepCopy:  false,
 		clusterName:      c.clusterName,
+		isClusterAware:   isClusterAware,
 	}
+	return cr, nil
+}
 
+// Get returns a single object from the cache.
+func (c *scopedCache) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	cr, err := c.cacheReader(obj)
+	if err != nil {
+		return err
+	}
 	return cr.Get(ctx, key, obj, opts...)
 }
 
 // List returns a list of objects from the cache.
 func (c *scopedCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	inf, gvk, scope, err := c.base.GetSharedInformer(list)
+	cr, err := c.cacheReader(list)
 	if err != nil {
-		return fmt.Errorf("failed to get informer for %T %s: %w", list, list.GetObjectKind().GroupVersionKind(), err)
+		return err
 	}
-
-	cr := cacheReader{
-		indexer:          inf.GetIndexer(),
-		groupVersionKind: gvk,
-		scopeName:        scope,
-		disableDeepCopy:  false,
-		clusterName:      c.clusterName,
-	}
-
 	return cr.List(ctx, list, opts...)
 }
 

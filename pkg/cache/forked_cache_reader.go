@@ -23,7 +23,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -46,6 +45,10 @@ var _ client.Reader = &cacheReader{}
 type cacheReader struct {
 	// indexer is the underlying indexer wrapped by this cache.
 	indexer cache.Indexer
+	// isClusterAware is true if the cache is cluster-aware.
+	// This is set here once on creation as lookups cause race
+	// conditions in tests otherwise.
+	isClusterAware bool
 
 	// groupVersionKind is the group-version-kind of the resource.
 	groupVersionKind schema.GroupVersionKind
@@ -59,9 +62,6 @@ type cacheReader struct {
 	disableDeepCopy bool
 
 	clusterName logicalcluster.Name
-
-	// mu protects concurrent access to indexer methods
-	mu sync.RWMutex
 }
 
 // Get checks the indexer for the object and writes a copy of it if found.
@@ -72,13 +72,11 @@ func (c *cacheReader) Get(ctx context.Context, key client.ObjectKey, out client.
 	storeKey := objectKeyToStoreKey(key)
 
 	// create cluster-aware key for KCP
-	c.mu.RLock()
-	_, isClusterAware := c.indexer.GetIndexers()[kcpcache.ClusterAndNamespaceIndexName]
-	c.mu.RUnlock()
-	if isClusterAware && c.clusterName.Empty() {
+	if c.isClusterAware && c.clusterName.Empty() {
 		return fmt.Errorf("cluster-aware cache requires a cluster in context")
 	}
-	if isClusterAware {
+
+	if c.isClusterAware {
 		storeKey = c.clusterName.String() + "|" + storeKey
 	}
 
@@ -138,10 +136,6 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 		return fmt.Errorf("continue list option is not supported by the cache")
 	}
 
-	c.mu.RLock()
-	_, isClusterAware := c.indexer.GetIndexers()[kcpcache.ClusterAndNamespaceIndexName]
-	c.mu.RUnlock()
-
 	switch {
 	case listOpts.FieldSelector != nil:
 		requiresExact := requiresExactMatch(listOpts.FieldSelector)
@@ -151,15 +145,15 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 		// list all objects by the field selector. If this is namespaced and we have one, ask for the
 		// namespaced index key. Otherwise, ask for the non-namespaced variant by using the fake "all namespaces"
 		// namespace.
-		objs, err = byIndexes(c.indexer, listOpts.FieldSelector.Requirements(), c.clusterName, listOpts.Namespace, &c.mu)
+		objs, err = byIndexes(c.indexer, listOpts.FieldSelector.Requirements(), c.clusterName, listOpts.Namespace, c.isClusterAware)
 	case listOpts.Namespace != "":
-		if isClusterAware && !c.clusterName.Empty() {
+		if c.isClusterAware && !c.clusterName.Empty() {
 			objs, err = c.indexer.ByIndex(kcpcache.ClusterAndNamespaceIndexName, kcpcache.ClusterAndNamespaceIndexKey(c.clusterName, listOpts.Namespace))
 		} else {
 			objs, err = c.indexer.ByIndex(cache.NamespaceIndex, listOpts.Namespace)
 		}
 	default:
-		if isClusterAware && !c.clusterName.Empty() {
+		if c.isClusterAware && !c.clusterName.Empty() {
 			objs, err = c.indexer.ByIndex(kcpcache.ClusterIndexName, kcpcache.ClusterIndexKey(c.clusterName))
 		} else {
 			objs = c.indexer.List()
@@ -211,16 +205,12 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 	return apimeta.SetList(out, runtimeObjs)
 }
 
-func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName logicalcluster.Name, namespace string, mu *sync.RWMutex) ([]interface{}, error) {
+func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName logicalcluster.Name, namespace string, isClusterAware bool) ([]interface{}, error) {
 	var (
 		err  error
 		objs []interface{}
 		vals []string
 	)
-	mu.RLock()
-	indexers := indexer.GetIndexers()
-	_, isClusterAware := indexers[kcpcache.ClusterAndNamespaceIndexName]
-	mu.RUnlock()
 	for idx, req := range requires {
 		indexName := fieldIndexName(req.Field)
 		var indexedValue string
@@ -242,7 +232,7 @@ func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName 
 			}
 			continue
 		}
-		fn, exist := indexers[indexName]
+		fn, exist := indexer.GetIndexers()[indexName]
 		if !exist {
 			return nil, fmt.Errorf("index with name %s does not exist", indexName)
 		}
