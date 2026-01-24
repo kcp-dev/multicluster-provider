@@ -17,20 +17,12 @@ limitations under the License.
 package apiexport
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"sync"
-
 	"github.com/go-logr/logr"
-	"golang.org/x/sync/errgroup"
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,21 +47,7 @@ var _ multicluster.ProviderRunnable = &Provider{}
 //
 // [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
 type Provider struct {
-	clusters *provider.Clusters
-	aware    multicluster.Aware
-	context  context.Context
-
-	providersLock sync.RWMutex
-	providers     map[string]*provider.Provider
-
-	log      logr.Logger
-	handlers handlers.Handlers
-
-	config        *rest.Config
-	scheme        *runtime.Scheme
-	object        client.Object
-	cache         cache.Cache
-	wildcardCache mcpcache.WildcardCache
+	provider.Factory
 }
 
 // Options are the options for creating a new instance of the apiexport provider.
@@ -135,153 +113,28 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 	}
 
 	return &Provider{
-		// func to pass into iner provider to lifecycle clusters
-		clusters:  ptr.To(clusters.New[cluster.Cluster]()),
-		providers: map[string]*provider.Provider{},
+		Factory: provider.Factory{
+			Clusters:  ptr.To(clusters.New[cluster.Cluster]()),
+			Providers: map[string]*provider.Provider{},
 
-		config:        cfg,
-		scheme:        options.Scheme,
-		object:        options.ObjectToWatch,
-		cache:         c,
-		wildcardCache: options.WildcardCache,
+			Log:      *options.Log,
+			Handlers: options.Handlers,
 
-		log:      *options.Log,
-		handlers: options.Handlers,
+			GetVWs: func(obj client.Object) ([]string, error) {
+				ess := obj.(*apisv1alpha1.APIExportEndpointSlice)
+				var urls []string
+				for _, endpoint := range ess.Status.APIExportEndpoints {
+					urls = append(urls, endpoint.URL)
+				}
+				return urls, nil
+			},
+
+			Config:        cfg,
+			Scheme:        options.Scheme,
+			Outer:         &apisv1alpha1.APIExportEndpointSlice{},
+			Inner:         options.ObjectToWatch,
+			Cache:         c,
+			WildcardCache: options.WildcardCache,
+		},
 	}, nil
-}
-
-// Get returns the cluster with the given name as a cluster.Cluster.
-func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
-	return p.clusters.Get(ctx, clusterName)
-}
-
-// IndexField adds an indexer to the clusters managed by this provider.
-func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	return p.clusters.IndexField(ctx, obj, field, extractValue)
-}
-
-// Start starts the provider and blocks.
-func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
-	p.aware = aware
-	p.context = ctx
-	// Create a child context we can cancel when the APIExportEndpointSlice goes away.
-	ctx, cancel := context.WithCancel(ctx)
-
-	informer, err := p.cache.GetInformer(ctx, &apisv1alpha1.APIExportEndpointSlice{})
-	if err != nil {
-		cancel()
-		return err
-	}
-
-	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj any) {
-			es := obj.(*apisv1alpha1.APIExportEndpointSlice)
-			p.log.Info("added APIExportEndpointSlice", "name", es.Name)
-			p.update(es)
-		},
-		UpdateFunc: func(oldObj any, newObj any) {
-			es := newObj.(*apisv1alpha1.APIExportEndpointSlice)
-			p.log.Info("updated APIExportEndpointSlice", "name", es.Name)
-			p.update(es)
-		},
-		DeleteFunc: func(obj any) {
-			p.log.Info("deleted APIExportEndpointSlice, stopping provider")
-			cancel()
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	g, ctx := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		<-ctx.Done()
-		err := informer.RemoveEventHandler(handler)
-		p.log.Info("removed cache event handler")
-		return err
-	})
-
-	g.Go(func() error {
-		err := p.cache.Start(ctx)
-		p.log.Info("cache stopped")
-		return err
-	})
-
-	if !p.cache.WaitForCacheSync(ctx) {
-		return fmt.Errorf("failed to wait for sync")
-	}
-
-	p.log.V(4).Info("caches have synced")
-
-	return g.Wait()
-}
-
-// update will look into the given APIExportEndpointSlice and ensure that providers
-// are initiated for every URL. It reads every URL and sets up a provider if needed for it,
-// and registers it inside current map. Finally, it cleans up any providers that are no longer
-// present in the endpoint slice (present in the providers but not in the current map).
-func (p *Provider) update(es *apisv1alpha1.APIExportEndpointSlice) {
-	p.providersLock.Lock()
-	defer p.providersLock.Unlock()
-
-	if p.aware == nil {
-		p.log.Info("aware is not set yet, skipping update")
-		return
-	}
-
-	var current = make(map[string]bool) // currently registered providers
-
-	for _, endpoint := range es.Status.APIExportEndpoints {
-		id := HashAPIExportURL(endpoint.URL)
-		current[id] = true
-
-		// Skip already registered endpoints.
-		if _, exists := p.providers[id]; exists {
-			continue
-		}
-
-		// Start provider if we didn't have it registered before.
-		// Else, we just mark that we found it (for cleaning up outdated providers later).
-		cfg := rest.CopyConfig(p.config)
-		cfg.Host = endpoint.URL
-
-		logger := p.log.WithValues("url", endpoint.URL)
-		prov, err := provider.New(cfg, p.clusters, provider.Options{
-			ObjectToWatch: p.object,
-			Scheme:        p.scheme,
-			Log:           &logger,
-			Handlers:      p.handlers,
-			WildcardCache: p.wildcardCache,
-		})
-		if err != nil {
-			p.log.Error(err, "failed to create provider")
-			continue
-		}
-
-		err = prov.Start(p.context, p.aware)
-		if err != nil {
-			p.log.Error(err, "failed to start provider")
-			continue
-		}
-
-		p.providers[id] = prov
-		current[id] = true
-	}
-
-	// Clean up providers that are no longer present in the endpoint slice.
-	for id := range p.providers {
-		if _, exists := current[id]; exists {
-			continue
-		}
-		p.log.Info("stopping provider for removed endpoint", "id", id)
-		delete(p.providers, id)
-	}
-}
-
-// HashAPIExportURL hashes an URL from an APIExportEndpointSlice status.
-func HashAPIExportURL(url string) string {
-	sha := sha256.New()
-	sha.Write([]byte(url))
-	return hex.EncodeToString(sha.Sum(nil))[:8]
 }
