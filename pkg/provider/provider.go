@@ -68,7 +68,6 @@ type Provider struct {
 	aware      multicluster.Aware
 	newCluster NewClusterFunc
 	clusters   *Clusters
-	cancelFns  map[logicalcluster.Name]context.CancelFunc
 	handlers   handlers.Handlers
 
 	recorderProvider *mcrecorder.Provider
@@ -169,7 +168,6 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 		handlers: options.Handlers,
 		log:      *options.Log,
 
-		cancelFns:  map[logicalcluster.Name]context.CancelFunc{},
 		clusters:   clusters,
 		newCluster: options.NewCluster,
 
@@ -207,20 +205,15 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			}
 
 			// create new scoped cluster.
-			clusterCtx, cancel := context.WithCancel(ctx)
 			cl, err := p.newCluster(p.config, clusterName, p.cache, p.scheme, p.recorderProvider)
 			if err != nil {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
-				cancel()
 				return
 			}
-			err = p.clusters.Add(clusterCtx, clusterName.String(), cl, p.aware)
-			if err != nil {
+			if err := p.clusters.Add(ctx, clusterName.String(), cl, p.aware); err != nil {
 				p.log.Error(err, "failed to add cluster", "cluster", clusterName)
-				cancel()
 				return
 			}
-			p.cancelFns[clusterName] = cancel
 			p.handlers.RunOnAdd(cobj)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
@@ -262,11 +255,8 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 					return
 				}
 
-				cancel, ok := p.cancelFns[clusterName]
 				if ok {
 					p.log.Info("disengaging cluster", "cluster", clusterName)
-					cancel()
-					delete(p.cancelFns, clusterName)
 					p.clusters.Remove(clusterName.String())
 					p.handlers.RunOnDelete(cobj)
 				}
