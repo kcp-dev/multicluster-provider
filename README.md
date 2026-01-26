@@ -9,6 +9,7 @@ This repository is expected to contain multiple [`Provider`](https://github.com/
 Currently available are:
 
 - [apiexport](https://pkg.go.dev/github.com/kcp-dev/multicluster-provider/apiexport): for interacting with the [`APIExport` virtual workspace](https://docs.kcp.io/kcp/latest/concepts/apis/exporting-apis/#build-your-controller) (or virtual workspaces with the same semantics).
+  - [path-aware](https://github.com/kcp-dev/multicluster-provider/blob/main/path-aware): A superset of the apiexport provider that provides path-awareness.
 - [initializingworkspaces](https://pkg.go.dev/github.com/kcp-dev/multicluster-provider/initializingworkspaces): for interacting with logical clusters that are currently being [initialized](https://docs.kcp.io/kcp/latest/concepts/workspaces/workspace-initialization/) and wait for an initializer created by a `WorkspaceType` to be removed.
 
 ## Examples
