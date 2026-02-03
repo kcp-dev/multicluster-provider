@@ -28,7 +28,6 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -70,12 +69,12 @@ type Provider struct {
 	clusters   *Clusters
 	handlers   handlers.Handlers
 
-	recorderProvider *mcrecorder.Provider
+	recorderManager *mcrecorder.Manager
 }
 
 // NewClusterFunc allows customizing the concrete cluster implementation used for
 // every engaged cluster.
-type NewClusterFunc func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, recorderProvider *mcrecorder.Provider) (*mcpcache.ScopedCluster, error)
+type NewClusterFunc func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, recorderProvider mcrecorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error)
 
 // Options are the options for creating a new instance of the apiexport provider.
 type Options struct {
@@ -97,12 +96,6 @@ type Options struct {
 
 	// Log is the logger used to write any logs.
 	Log *logr.Logger
-
-	// makeBroadcaster allows deferring the creation of the broadcaster to
-	// avoid leaking goroutines if we never call Start on this manager.  It also
-	// returns whether or not this is an "owned" broadcaster, and as such should be
-	// stopped with the manager.
-	makeBroadcaster mcrecorder.EventBroadcasterProducer
 
 	// NewCluster allows to customize the cluster instance that is being created for
 	// each engaged cluster. If this is not set, it defaults to a ScopedCache that
@@ -140,24 +133,9 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 		options.NewCluster = mcpcache.NewScopedCluster
 	}
 
-	if options.makeBroadcaster == nil {
-		options.makeBroadcaster = func() (record.EventBroadcaster, bool) {
-			return record.NewBroadcaster(), true
-		}
-	}
 	if options.Log == nil {
 		logger := log.Log.WithName("kcp-apiexport-internal-provider")
 		options.Log = &logger
-	}
-
-	eventClient, err := rest.HTTPClientFor(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client for events: %w", err)
-	}
-
-	recorderProvider, err := mcrecorder.NewProvider(eventClient, options.Scheme, logr.Discard(), options.makeBroadcaster)
-	if err != nil {
-		return nil, err
 	}
 
 	return &Provider{
@@ -171,7 +149,7 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 		clusters:   clusters,
 		newCluster: options.NewCluster,
 
-		recorderProvider: recorderProvider,
+		recorderManager: mcrecorder.NewManager(options.Scheme, options.Log.WithName("recorder-manager")),
 	}, nil
 }
 
@@ -204,8 +182,14 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				return
 			}
 
+			recorder, err := p.recorderManager.GetProvider(p.config, clusterName)
+			if err != nil {
+				p.log.Error(err, "failed to get broadcaster", "cluster", clusterName)
+				return
+			}
+
 			// create new scoped cluster.
-			cl, err := p.newCluster(p.config, clusterName, p.cache, p.scheme, p.recorderProvider)
+			cl, err := p.newCluster(p.config, clusterName, p.cache, p.scheme, recorder)
 			if err != nil {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 				return
@@ -250,10 +234,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 
 			if len(keys) == 0 {
 				// shut down individual event broadaster
-				if err := p.recorderProvider.StopBroadcaster(clusterName.String()); err != nil {
-					p.log.Error(err, "failed to stop event broadcaster", "cluster", clusterName)
-					return
-				}
+				p.recorderManager.StopProvider(ctx, clusterName)
 
 				if ok {
 					p.log.Info("disengaging cluster", "cluster", clusterName)
@@ -273,7 +254,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 		case <-ctx.Done():
 			shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
-			p.recorderProvider.Stop(shutdownCtx)
+			p.recorderManager.Stop(shutdownCtx)
 		default:
 		}
 		return nil

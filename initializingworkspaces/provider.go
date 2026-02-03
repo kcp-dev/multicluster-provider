@@ -136,7 +136,7 @@ func New(cfg *rest.Config, workspaceTypeName string, options Options) (*Provider
 			// ensure the generic provider builds a per-cluster cache instead of a wildcard-based
 			// cache, since this virtual workspace does not offer anything but logicalclusters on
 			// the wildcard endpoint
-			NewCluster: func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, _ *recorder.Provider) (*mcpcache.ScopedCluster, error) {
+			NewCluster: func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, _ recorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error) {
 				return mcpcache.NewScopedInitializingCluster(cfg, clusterName, wildcardCA, scheme)
 			},
 		},
