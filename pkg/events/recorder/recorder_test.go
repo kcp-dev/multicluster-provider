@@ -42,5 +42,5 @@ func TestEventBroadcasterProvider(t *testing.T) {
 
 	err = provider.StopBroadcaster("cluster")
 	require.NoError(t, err)
-	require.Len(t, provider.broadcasters, 0)
+	require.Empty(t, provider.broadcasters)
 }
