@@ -82,12 +82,12 @@ func TestScopedIndexInformerEventHandler(t *testing.T) {
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
 		fooConfigMapsLock.RLock()
 		defer fooConfigMapsLock.RUnlock()
-		require.Len(t, fooConfigMaps, 1)
-		require.Equal(t, fooConfigMaps[0].Name, "my-configmap")
+		require.Len(collect, fooConfigMaps, 1)
+		require.Equal(collect, "my-configmap", fooConfigMaps[0].Name)
 
 		barConfigMapsLock.RLock()
 		defer barConfigMapsLock.RUnlock()
-		require.Len(t, barConfigMaps, 1)
-		require.Equal(t, barConfigMaps[0].Name, "not-my-configmap")
+		require.Len(collect, barConfigMaps, 1)
+		require.Equal(collect, "not-my-configmap", barConfigMaps[0].Name)
 	}, wait.ForeverTestTimeout, time.Second)
 }
