@@ -98,6 +98,9 @@ imports: install-golangci-lint
 verify:
 	./hack/verify-boilerplate.sh
 	./hack/verify-licenses.sh
+	for MOD in . $$(git ls-files '**/go.mod' | sed 's,/go.mod,,'); do \
+		(cd $$MOD; echo "Tidying ./$$MOD ..."; go mod tidy);\
+	done; \
 
 .PHONY: test
 test:
