@@ -37,7 +37,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
@@ -279,7 +279,7 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			lock           sync.RWMutex
 			engaged        = sets.NewString()
 			eventLock      sync.RWMutex
-			eventRecorders = make(map[string]record.EventRecorder)
+			eventRecorders = make(map[string]events.EventRecorder)
 			p              *apiexport.Provider
 			g              *errgroup.Group
 			cancelGroup    context.CancelFunc
@@ -372,12 +372,12 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 					if !ok {
 						eventLock.RUnlock()
 						eventLock.Lock()
-						recorder = cluster.GetEventRecorderFor(request.ClusterName)
+						recorder = cluster.GetEventRecorder(request.ClusterName)
 						eventRecorders[request.ClusterName] = recorder
 						eventLock.Unlock()
 					}
 
-					recorder.Event(&binding, corev1.EventTypeNormal, "reason", "message")
+					recorder.Eventf(&binding, nil, corev1.EventTypeNormal, "reason", "message", "note")
 
 					return reconcile.Result{}, nil
 				}))

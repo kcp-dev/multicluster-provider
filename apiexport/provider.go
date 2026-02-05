@@ -122,9 +122,9 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 
 			GetVWs: func(obj client.Object) ([]string, error) {
 				ess := obj.(*apisv1alpha1.APIExportEndpointSlice)
-				var urls []string
-				for _, endpoint := range ess.Status.APIExportEndpoints {
-					urls = append(urls, endpoint.URL)
+				urls := make([]string, len(ess.Status.APIExportEndpoints))
+				for i, endpoint := range ess.Status.APIExportEndpoints {
+					urls[i] = endpoint.URL
 				}
 				return urls, nil
 			},

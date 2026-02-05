@@ -117,8 +117,8 @@ func main() {
 				}
 
 				log.Info("Reconciling ConfigMap", "name", s.Name, "uuid", s.UID)
-				recorder := cl.GetEventRecorderFor("kcp-configmap-controller")
-				recorder.Eventf(s, corev1.EventTypeNormal, "ConfigMap Reconciled", "ConfigMap %s reconciled", s.Name)
+				recorder := cl.GetEventRecorder("kcp-configmap-controller")
+				recorder.Eventf(s, nil, corev1.EventTypeNormal, "ConfigMapChanged", "ConfigMapReconciling", "reconciling ConfigMap %s", s.Name)
 
 				// This is optional part. Please delete it if you want to keep the example minimal.
 				// Here we demonstrate that you can query cluster object by using canonical logical cluster path
@@ -162,6 +162,7 @@ func main() {
 					log.Info("Found ConfigMap via path lookup", "name", s.Name, "in cluster", canonicalPath)
 				}
 
+				recorder.Eventf(s, nil, corev1.EventTypeNormal, "ConfigMapChanged", "ConfigMapReconciled", "reconciled ConfigMap %s", s.Name)
 				return reconcile.Result{}, nil
 			},
 		)); err != nil {

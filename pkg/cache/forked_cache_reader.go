@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// This file has been forked from https://github.com/kubernetes-sigs/controller-runtime/blob/78b3ce63cf927debb122dd641290a89d20d776e3/pkg/cache/internal/cache_reader.go.
+// This file has been forked from https://github.com/kubernetes-sigs/controller-runtime/blob/f52bbb8bb1a2275cbe90dec8d6c12d5cacb1a7de/pkg/cache/internal/cache_reader.go.
 // It's been modified to allow scoping a CacheReader to a specific logical cluster.
 
 package cache
@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -65,7 +66,10 @@ type cacheReader struct {
 }
 
 // Get checks the indexer for the object and writes a copy of it if found.
-func (c *cacheReader) Get(ctx context.Context, key client.ObjectKey, out client.Object, _ ...client.GetOption) error {
+func (c *cacheReader) Get(ctx context.Context, key client.ObjectKey, out client.Object, opts ...client.GetOption) error {
+	getOpts := client.GetOptions{}
+	getOpts.ApplyOptions(opts)
+
 	if c.scopeName == apimeta.RESTScopeNameRoot {
 		key.Namespace = ""
 	}
@@ -101,7 +105,7 @@ func (c *cacheReader) Get(ctx context.Context, key client.ObjectKey, out client.
 		return fmt.Errorf("cache contained %T, which is not an Object", obj)
 	}
 
-	if c.disableDeepCopy {
+	if c.disableDeepCopy || (getOpts.UnsafeDisableDeepCopy != nil && *getOpts.UnsafeDisableDeepCopy) {
 		// skip deep copy which might be unsafe
 		// you must DeepCopy any object before mutating it outside
 	} else {
@@ -117,7 +121,7 @@ func (c *cacheReader) Get(ctx context.Context, key client.ObjectKey, out client.
 		return fmt.Errorf("cache had type %s, but %s was asked for", objVal.Type(), outVal.Type())
 	}
 	reflect.Indirect(outVal).Set(reflect.Indirect(objVal))
-	if !c.disableDeepCopy {
+	if !c.disableDeepCopy && (getOpts.UnsafeDisableDeepCopy == nil || !*getOpts.UnsafeDisableDeepCopy) {
 		out.GetObjectKind().SetGroupVersionKind(c.groupVersionKind)
 	}
 
@@ -205,12 +209,13 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 	return apimeta.SetList(out, runtimeObjs)
 }
 
-func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName logicalcluster.Name, namespace string, isClusterAware bool) ([]interface{}, error) {
+func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName logicalcluster.Name, namespace string, isClusterAware bool) ([]any, error) {
 	var (
 		err  error
-		objs []interface{}
+		objs []any
 		vals []string
 	)
+	indexers := indexer.GetIndexers()
 	for idx, req := range requires {
 		indexName := fieldIndexName(req.Field)
 		var indexedValue string
@@ -232,21 +237,18 @@ func byIndexes(indexer cache.Indexer, requires fields.Requirements, clusterName 
 			}
 			continue
 		}
-		fn, exist := indexer.GetIndexers()[indexName]
+		fn, exist := indexers[indexName]
 		if !exist {
 			return nil, fmt.Errorf("index with name %s does not exist", indexName)
 		}
-		filteredObjects := make([]interface{}, 0, len(objs))
+		filteredObjects := make([]any, 0, len(objs))
 		for _, obj := range objs {
 			vals, err = fn(obj)
 			if err != nil {
 				return nil, err
 			}
-			for _, val := range vals {
-				if val == indexedValue {
-					filteredObjects = append(filteredObjects, obj)
-					break
-				}
+			if slices.Contains(vals, indexedValue) {
+				filteredObjects = append(filteredObjects, obj)
 			}
 		}
 		if len(filteredObjects) == 0 {
