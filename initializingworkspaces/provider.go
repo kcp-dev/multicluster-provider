@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The KCP Authors.
+Copyright 2025 The kcp Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ type Options struct {
 	Handlers handlers.Handlers
 }
 
-// New creates a new KCP initializing workspaces provider.
+// New creates a new kcp initializing workspaces provider.
 func New(cfg *rest.Config, workspaceTypeName string, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {

@@ -75,7 +75,7 @@ func (c *cacheReader) Get(ctx context.Context, key client.ObjectKey, out client.
 	}
 	storeKey := objectKeyToStoreKey(key)
 
-	// create cluster-aware key for KCP
+	// create cluster-aware key for kcp
 	if c.isClusterAware && c.clusterName.Empty() {
 		return fmt.Errorf("cluster-aware cache requires a cluster in context")
 	}
