@@ -49,9 +49,7 @@ type Provider struct {
 	pathStore *paths.Store
 }
 
-// New creates a new kcp virtual workspace provider. The provided [rest.Config]
-// must point to a virtual workspace apiserver base path, i.e. up to but without
-// the '/clusters/*' suffix. This information can be extracted from an APIExportEndpointSlice status.
+// New creates a new kcp virtual workspace provider.
 func New(cfg *rest.Config, endpointSliceName string, options provider.Options) (*Provider, error) {
 	store := paths.New()
 
