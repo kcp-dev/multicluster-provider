@@ -82,10 +82,7 @@ type Options struct {
 	WildcardCache mcpcache.WildcardCache
 }
 
-// New creates a new kcp virtual workspace provider. The provided [rest.Config]
-// must point to a virtual workspace apiserver base path, i.e. up to but without
-// the '/clusters/*' suffix. This information can be extracted from the APIExport
-// status (deprecated) or an APIExportEndpointSlice status.
+// New creates a new kcp virtual workspace provider.
 func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider, error) {
 	// Do the defaulting controller-runtime would do for those fields we need.
 	if options.Scheme == nil {
