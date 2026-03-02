@@ -18,6 +18,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -90,8 +91,11 @@ func (p *Providers) setup(ctx context.Context, name string, prov *Provider, awar
 	p.providers[name] = cp
 
 	return func() error {
-		// TODO ignore context cancellation
-		return prov.Start(ctx)
+		err := prov.Start(ctx)
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
 	}, nil
 }
 
