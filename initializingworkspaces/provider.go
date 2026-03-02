@@ -109,7 +109,7 @@ func New(cfg *rest.Config, workspaceTypeName string, options Options) (*Provider
 	return &Provider{
 		Factory: provider.Factory{
 			Clusters:  ptr.To(clusters.New[cluster.Cluster]()),
-			Providers: map[string]*provider.Provider{},
+			Providers: provider.NewProviders(),
 
 			Log:      *options.Log,
 			Handlers: options.Handlers,
