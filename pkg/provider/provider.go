@@ -64,7 +64,6 @@ type Provider struct {
 
 	log logr.Logger
 
-	aware      multicluster.Aware
 	newCluster NewClusterFunc
 	clusters   *Clusters
 	handlers   handlers.Handlers
@@ -153,11 +152,7 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 	}, nil
 }
 
-// Start starts the provider and blocks.
-func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
-	g, ctx := errgroup.WithContext(ctx)
-	p.aware = aware
-
+func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 	// Watch logical clusters and engage them as clusters in multicluster-runtime.
 	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(false))
 	if err != nil {
@@ -194,7 +189,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 				return
 			}
-			if err := p.clusters.Add(ctx, clusterName.String(), cl, p.aware); err != nil {
+			if err := p.clusters.Add(ctx, clusterName.String(), cl, aware); err != nil {
 				p.log.Error(err, "failed to add cluster", "cluster", clusterName)
 				return
 			}
@@ -246,6 +241,13 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	}); err != nil {
 		return fmt.Errorf("failed to add EventHandler: %w", err)
 	}
+
+	return nil
+}
+
+// Start starts the provider and blocks.
+func (p *Provider) Start(ctx context.Context) error {
+	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error { return p.cache.Start(ctx) })
 	g.Go(func() error {
