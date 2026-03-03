@@ -72,7 +72,8 @@ type Provider struct {
 
 	recorderManager *mcrecorder.Manager
 
-	setup bool
+	setup      bool
+	deregister func() error
 }
 
 // NewClusterFunc allows customizing the concrete cluster implementation used for
@@ -183,7 +184,7 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 	if err != nil {
 		return fmt.Errorf("failed to get shared informer: %w", err)
 	}
-	if _, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+	registration, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
 			if !ok {
@@ -259,8 +260,13 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 				}
 			}
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("failed to add EventHandler: %w", err)
+	}
+
+	p.deregister = func() error {
+		return inf.RemoveEventHandler(registration)
 	}
 
 	return nil
@@ -283,6 +289,9 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			p.recorderManager.Stop(shutdownCtx)
+			if p.deregister != nil {
+				return p.deregister()
+			}
 		default:
 		}
 		return nil
