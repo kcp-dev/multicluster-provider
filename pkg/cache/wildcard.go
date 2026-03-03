@@ -107,6 +107,28 @@ type wildcardCache struct {
 
 	indexTrackerLock sync.RWMutex
 	indexTracker     map[string]struct{}
+
+	startedLock sync.Mutex
+	startOnce   func() error
+}
+
+func (c *wildcardCache) Start(ctx context.Context) error {
+	// TODO This is a workaround since [provider.Factory] and
+	// [provider.Provider] can currently hand around the same cache if
+	// a user passes it in. This breaks because the first
+	// [provider.Provider] starts the cache successfully and alle
+	// subsequent ones fail since the informers are already running.
+	//
+	// When refactoring the provider package this can probably be
+	// removed.
+	c.startedLock.Lock()
+	if c.startOnce == nil {
+		c.startOnce = sync.OnceValue(func() error {
+			return c.Cache.Start(ctx)
+		})
+	}
+	c.startedLock.Unlock()
+	return c.startOnce()
 }
 
 func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIndexInformer, schema.GroupVersionKind, apimeta.RESTScopeName, error) {
