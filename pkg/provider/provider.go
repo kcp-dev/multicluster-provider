@@ -46,6 +46,8 @@ import (
 	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
 )
 
+var _ multicluster.Provider = &Provider{}
+
 // Clusters is an alias for clusters.Clusters[cluster.Cluster].
 type Clusters = clusters.Clusters[cluster.Cluster]
 
@@ -64,12 +66,14 @@ type Provider struct {
 
 	log logr.Logger
 
-	aware      multicluster.Aware
 	newCluster NewClusterFunc
 	clusters   *Clusters
 	handlers   handlers.Handlers
 
 	recorderManager *mcrecorder.Manager
+
+	setup      bool
+	deregister func() error
 }
 
 // NewClusterFunc allows customizing the concrete cluster implementation used for
@@ -153,10 +157,23 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 	}, nil
 }
 
-// Start starts the provider and blocks.
-func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
-	g, ctx := errgroup.WithContext(ctx)
-	p.aware = aware
+// Get implements multicluster.Provider.
+func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+	return p.clusters.Get(ctx, clusterName)
+}
+
+// IndexField implements multicluster.Provider.
+func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return p.cache.IndexField(ctx, obj, field, extractValue)
+}
+
+// Setup initializes the Provider.
+// Calling setup multiple times with different awares is not valid.
+func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
+	if p.setup {
+		return nil
+	}
+	p.setup = true
 
 	// Watch logical clusters and engage them as clusters in multicluster-runtime.
 	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(false))
@@ -167,7 +184,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 	if err != nil {
 		return fmt.Errorf("failed to get shared informer: %w", err)
 	}
-	if _, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+	registration, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			cobj, ok := obj.(client.Object)
 			if !ok {
@@ -194,7 +211,7 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
 				return
 			}
-			if err := p.clusters.Add(ctx, clusterName.String(), cl, p.aware); err != nil {
+			if err := p.clusters.Add(ctx, clusterName.String(), cl, aware); err != nil {
 				p.log.Error(err, "failed to add cluster", "cluster", clusterName)
 				return
 			}
@@ -243,9 +260,26 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 				}
 			}
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("failed to add EventHandler: %w", err)
 	}
+
+	p.deregister = func() error {
+		return inf.RemoveEventHandler(registration)
+	}
+
+	return nil
+}
+
+// Start starts the provider and blocks.
+// Start will call Setup if it has not been called before.
+func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
+	if err := p.Setup(ctx, aware); err != nil {
+		return err
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error { return p.cache.Start(ctx) })
 	g.Go(func() error {
@@ -255,6 +289,9 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 			shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			p.recorderManager.Stop(shutdownCtx)
+			if p.deregister != nil {
+				return p.deregister()
+			}
 		default:
 		}
 		return nil

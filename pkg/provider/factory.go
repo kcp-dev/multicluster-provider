@@ -41,7 +41,7 @@ import (
 type Factory struct {
 	Clusters *Clusters
 
-	Providers map[string]*Provider
+	Providers *Providers
 
 	Log      logr.Logger
 	Handlers handlers.Handlers
@@ -129,7 +129,7 @@ func (f *Factory) update(ctx context.Context, aware multicluster.Aware, obj clie
 		current[id] = true
 
 		// Skip already registered endpoints.
-		if _, exists := f.Providers[id]; exists {
+		if f.Providers.has(id) {
 			continue
 		}
 
@@ -152,22 +152,28 @@ func (f *Factory) update(ctx context.Context, aware multicluster.Aware, obj clie
 			continue
 		}
 
-		if err := prov.Start(ctx, aware); err != nil {
-			f.Log.Error(err, "failed to start provider")
+		run, err := f.Providers.setup(ctx, id, prov, aware)
+		if err != nil {
+			f.Log.Error(err, "failed to setup provider")
 			continue
 		}
 
-		f.Providers[id] = prov
+		go func() {
+			if err := run(); err != nil {
+				f.Log.Error(err, "error in provider")
+			}
+		}()
+
 		current[id] = true
 	}
 
 	// Clean up providers that are no longer present in the endpoint slice.
-	for id := range f.Providers {
+	for _, id := range f.Providers.keys() {
 		if _, exists := current[id]; exists {
 			continue
 		}
 		f.Log.Info("stopping provider for removed endpoint", "id", id)
-		delete(f.Providers, id)
+		f.Providers.stop(id)
 	}
 }
 
