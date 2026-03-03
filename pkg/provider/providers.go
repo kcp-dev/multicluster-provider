@@ -91,7 +91,7 @@ func (p *Providers) setup(ctx context.Context, name string, prov *Provider, awar
 	p.providers[name] = cp
 
 	return func() error {
-		err := prov.Start(ctx)
+		err := prov.Start(ctx, aware)
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}

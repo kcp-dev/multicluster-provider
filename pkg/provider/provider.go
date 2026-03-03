@@ -46,6 +46,8 @@ import (
 	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
 )
 
+var _ multicluster.Provider = &Provider{}
+
 // Clusters is an alias for clusters.Clusters[cluster.Cluster].
 type Clusters = clusters.Clusters[cluster.Cluster]
 
@@ -69,6 +71,8 @@ type Provider struct {
 	handlers   handlers.Handlers
 
 	recorderManager *mcrecorder.Manager
+
+	setup bool
 }
 
 // NewClusterFunc allows customizing the concrete cluster implementation used for
@@ -152,7 +156,24 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 	}, nil
 }
 
+// Get implements multicluster.Provider.
+func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+	return p.clusters.Get(ctx, clusterName)
+}
+
+// IndexField implements multicluster.Provider.
+func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return p.cache.IndexField(ctx, obj, field, extractValue)
+}
+
+// Setup initializes the Provider.
+// Calling setup multiple times with different awares is not valid.
 func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
+	if p.setup {
+		return nil
+	}
+	p.setup = true
+
 	// Watch logical clusters and engage them as clusters in multicluster-runtime.
 	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(false))
 	if err != nil {
@@ -246,7 +267,12 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 }
 
 // Start starts the provider and blocks.
-func (p *Provider) Start(ctx context.Context) error {
+// Start will call Setup if it has not been called before.
+func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
+	if err := p.Setup(ctx, aware); err != nil {
+		return err
+	}
+
 	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error { return p.cache.Start(ctx) })
