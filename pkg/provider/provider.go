@@ -191,29 +191,8 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 				klog.Errorf("unexpected object type %T", obj)
 				return
 			}
-			clusterName := logicalcluster.From(cobj)
-
-			// check if cluster already exists before creating. There is small chance for rance but its ok.
-			if _, err := p.clusters.Get(ctx, clusterName.String()); err == nil {
-				p.log.Info("cluster already exists, skipping creation", "cluster", clusterName)
-				return
-			}
-
-			recorder, err := p.recorderManager.GetProvider(p.config, clusterName)
-			if err != nil {
-				p.log.Error(err, "failed to get broadcaster", "cluster", clusterName)
-				return
-			}
-
-			// create new scoped cluster.
-			cl, err := p.newCluster(p.config, clusterName, p.cache, p.scheme, recorder)
-			if err != nil {
-				p.log.Error(err, "failed to create cluster", "cluster", clusterName)
-				return
-			}
-			if err := p.clusters.Add(ctx, clusterName.String(), cl, aware); err != nil {
-				p.log.Error(err, "failed to add cluster", "cluster", clusterName)
-				return
+			if err := p.updateCluster(ctx, cobj, aware); err != nil {
+				klog.Errorf("unexpected error handling event: %v", err)
 			}
 			p.handlers.RunOnAdd(cobj)
 		},
@@ -222,6 +201,9 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 			if !ok {
 				klog.Errorf("unexpected object type %T", newObj)
 				return
+			}
+			if err := p.updateCluster(ctx, cobj, aware); err != nil {
+				klog.Errorf("unexpected error handling event: %v", err)
 			}
 			p.handlers.RunOnUpdate(oldObj.(client.Object), cobj)
 		},
@@ -267,6 +249,32 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 
 	p.deregister = func() error {
 		return inf.RemoveEventHandler(registration)
+	}
+
+	return nil
+}
+
+func (p *Provider) updateCluster(ctx context.Context, obj client.Object, aware multicluster.Aware) error {
+	clusterName := logicalcluster.From(obj)
+
+	// check if cluster already exists before creating. There is small chance for race but its ok.
+	if _, err := p.clusters.Get(ctx, clusterName.String()); err == nil {
+		return fmt.Errorf("cluster %q already exists, skipping creation", clusterName)
+	}
+
+	recorder, err := p.recorderManager.GetProvider(p.config, clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to get broadcaster: %w", err)
+	}
+
+	// create new scoped cluster.
+	cl, err := p.newCluster(p.config, clusterName, p.cache, p.scheme, recorder)
+	if err != nil {
+		return fmt.Errorf("failed to create cluster %q: %w", clusterName, err)
+	}
+
+	if err := p.clusters.Add(ctx, clusterName.String(), cl, aware); err != nil {
+		return fmt.Errorf("failed to add cluster %q: %w", clusterName, err)
 	}
 
 	return nil
