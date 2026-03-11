@@ -74,6 +74,9 @@ type Provider struct {
 
 	setup      bool
 	deregister func() error
+
+	addFilter    func(obj client.Object) (bool, error)
+	updateFilter func(obj client.Object) (bool, error)
 }
 
 // NewClusterFunc allows customizing the concrete cluster implementation used for
@@ -109,6 +112,14 @@ type Options struct {
 	// Handlers are lifecycle handlers for logical clusters managed by this provider represented
 	// by apibinding object.
 	Handlers handlers.Handlers
+
+	// AddFilter is called to filter objects to engage.
+	// If false is returned the object is not engaged.
+	AddFilter func(obj client.Object) (bool, error)
+
+	// UpdateFilter is called to filter objects to engage.
+	// If false is returned the object is not engaged.
+	UpdateFilter func(obj client.Object) (bool, error)
 }
 
 // New creates a new kcp virtual workspace provider. The provided [rest.Config]
@@ -154,6 +165,9 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 		newCluster: options.NewCluster,
 
 		recorderManager: mcrecorder.NewManager(options.Scheme, options.Log.WithName("recorder-manager")),
+
+		addFilter:    options.AddFilter,
+		updateFilter: options.UpdateFilter,
 	}, nil
 }
 
@@ -191,6 +205,16 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 				klog.Errorf("unexpected object type %T", obj)
 				return
 			}
+			if p.addFilter != nil {
+				accept, err := p.addFilter(cobj)
+				if err != nil {
+					klog.Errorf("error in filter function: %v", err)
+					return
+				}
+				if !accept {
+					return
+				}
+			}
 			if err := p.updateCluster(ctx, cobj, aware); err != nil {
 				klog.Errorf("unexpected error handling event: %v", err)
 			}
@@ -201,6 +225,16 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 			if !ok {
 				klog.Errorf("unexpected object type %T", newObj)
 				return
+			}
+			if p.updateFilter != nil {
+				accept, err := p.updateFilter(cobj)
+				if err != nil {
+					klog.Errorf("error in filter function: %v", err)
+					return
+				}
+				if !accept {
+					return
+				}
 			}
 			if err := p.updateCluster(ctx, cobj, aware); err != nil {
 				klog.Errorf("unexpected error handling event: %v", err)
@@ -221,7 +255,6 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 					return
 				}
 			}
-
 			clusterName := logicalcluster.From(cobj)
 
 			// check if there is no object left in the index.

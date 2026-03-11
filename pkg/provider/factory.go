@@ -48,6 +48,9 @@ type Factory struct {
 
 	GetVWs func(obj client.Object) ([]string, error)
 
+	AddFilter    func(obj client.Object) (bool, error)
+	UpdateFilter func(obj client.Object) (bool, error)
+
 	Config        *rest.Config
 	Scheme        *runtime.Scheme
 	Outer, Inner  client.Object
@@ -146,6 +149,8 @@ func (f *Factory) update(ctx context.Context, aware multicluster.Aware, obj clie
 			Handlers:      f.Handlers,
 			WildcardCache: f.WildcardCache,
 			NewCluster:    f.NewCluster,
+			AddFilter:     f.AddFilter,
+			UpdateFilter:  f.UpdateFilter,
 		})
 		if err != nil {
 			f.Log.Error(err, "failed to create provider")

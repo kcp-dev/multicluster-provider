@@ -68,6 +68,18 @@ type Options struct {
 	// the same endpoint semantics.
 	ObjectToWatch client.Object
 
+	// AddFilter is called to filter objects to engage.
+	// If false is returned the object is not engaged.
+	AddFilter func(obj client.Object) (bool, error)
+
+	// UpdateFilter is called to filter objects to engage.
+	// If false is returned the object is not engaged.
+	UpdateFilter func(obj client.Object) (bool, error)
+
+	// DeleteFilter is called to filter objects to engage.
+	// If false is returned the object is not engaged.
+	DeleteFilter func(obj client.Object) (bool, error)
+
 	// Handlers are lifecycle handlers, ran for each logical cluster in the provider represented
 	// by apibinding object.
 	Handlers handlers.Handlers
@@ -130,6 +142,9 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 			Scheme:        options.Scheme,
 			Outer:         &apisv1alpha1.APIExportEndpointSlice{},
 			Inner:         options.ObjectToWatch,
+			AddFilter:     options.AddFilter,
+			UpdateFilter:  options.UpdateFilter,
+			DeleteFilter:  options.DeleteFilter,
 			Cache:         c,
 			WildcardCache: options.WildcardCache,
 		},
