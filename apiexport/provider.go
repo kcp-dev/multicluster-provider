@@ -17,8 +17,12 @@ limitations under the License.
 package apiexport
 
 import (
+	"fmt"
+
 	"github.com/go-logr/logr"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -41,6 +45,47 @@ import (
 
 var _ multicluster.Provider = &Provider{}
 var _ multicluster.ProviderRunnable = &Provider{}
+
+// ConditionReadyFunc returns a function that checks if the given object has a condition with the given type and status True.
+func ConditionReadyFunc(conditionType string) func(client.Object) (bool, error) {
+	return func(obj client.Object) (bool, error) {
+		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+		if err != nil {
+			return false, fmt.Errorf("unable to convert object to unstructured map: %w", err)
+		}
+
+		conditions, found, err := unstructured.NestedSlice(unstructuredMap, "status", "conditions")
+		if err != nil {
+			return false, fmt.Errorf("error getting conditions from unstructured map: %w", err)
+		}
+		if !found {
+			return false, nil
+		}
+
+		for _, condRaw := range conditions {
+			cond, ok := condRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			condType, _, err := unstructured.NestedString(cond, "type")
+			if err != nil {
+				return false, fmt.Errorf("error getting type from unstructured condition %v: %w", cond, err)
+			}
+
+			condStatus, _, err := unstructured.NestedString(cond, "status")
+			if err != nil {
+				return false, fmt.Errorf("error getting status from unstructured condition %v: %w", cond, err)
+			}
+
+			if condType == conditionType && condStatus == string(corev1.ConditionTrue) {
+				return true, nil
+			}
+		}
+
+		return false, nil
+	}
+}
 
 // Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that represents each [logical cluster]
 // (in the kcp sense) exposed via a APIExport virtual workspace as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
@@ -68,6 +113,16 @@ type Options struct {
 	// the same endpoint semantics.
 	ObjectToWatch client.Object
 
+	// AddFilter is called to filter objects to engage.
+	// If false is returned the object is not engaged.
+	// If unset and ObjectToWatch is unset it defaults to ConditionReadyFunc("Ready")
+	AddFilter func(obj client.Object) (bool, error)
+
+	// UpdateFilter is called to filter objects to engage.
+	// If false is returned the object is not engaged.
+	// If unset and ObjectToWatch is unset it defaults to ConditionReadyFunc("Ready")
+	UpdateFilter func(obj client.Object) (bool, error)
+
 	// Handlers are lifecycle handlers, ran for each logical cluster in the provider represented
 	// by apibinding object.
 	Handlers handlers.Handlers
@@ -91,6 +146,13 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 
 	if options.ObjectToWatch == nil {
 		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
+
+		if options.AddFilter == nil {
+			options.AddFilter = ConditionReadyFunc("Ready")
+		}
+		if options.UpdateFilter == nil {
+			options.UpdateFilter = ConditionReadyFunc("Ready")
+		}
 	}
 
 	if options.Log == nil {
@@ -130,6 +192,8 @@ func New(cfg *rest.Config, endpointSliceName string, options Options) (*Provider
 			Scheme:        options.Scheme,
 			Outer:         &apisv1alpha1.APIExportEndpointSlice{},
 			Inner:         options.ObjectToWatch,
+			AddFilter:     options.AddFilter,
+			UpdateFilter:  options.UpdateFilter,
 			Cache:         c,
 			WildcardCache: options.WildcardCache,
 		},
