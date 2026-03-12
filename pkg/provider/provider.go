@@ -347,3 +347,8 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 
 	return g.Wait()
 }
+
+// GetCache provides access to the provider specific instance of the WildcardCache.
+func (p *Provider) GetCache() mcpcache.WildcardCache {
+	return p.cache
+}
