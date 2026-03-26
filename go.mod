@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kcp-dev/apimachinery/v2 v2.30.0
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5
 	github.com/kcp-dev/sdk v0.30.0

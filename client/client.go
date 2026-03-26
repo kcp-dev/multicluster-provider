@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/hashicorp/golang-lru/v2"
-
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -39,27 +37,23 @@ type clusterClient struct {
 	baseConfig *rest.Config
 	opts       client.Options
 
-	lock  sync.RWMutex
-	cache *lru.Cache[logicalcluster.Path, client.Client]
+	lock    sync.RWMutex
+	clients map[logicalcluster.Path]client.Client
 }
 
 // New creates a new cluster-aware client.
 func New(cfg *rest.Config, options client.Options) (ClusterClient, error) {
-	ca, err := lru.New[logicalcluster.Path, client.Client](100)
-	if err != nil {
-		return nil, err
-	}
 	return &clusterClient{
 		opts:       options,
 		baseConfig: cfg,
-		cache:      ca,
+		clients:    make(map[logicalcluster.Path]client.Client),
 	}, nil
 }
 
 func (c *clusterClient) Cluster(cluster logicalcluster.Path) client.Client {
 	// quick path
 	c.lock.RLock()
-	cli, ok := c.cache.Get(cluster)
+	cli, ok := c.clients[cluster]
 	c.lock.RUnlock()
 	if ok {
 		return cli
@@ -68,17 +62,16 @@ func (c *clusterClient) Cluster(cluster logicalcluster.Path) client.Client {
 	// slow path
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if cli, ok := c.cache.Get(cluster); ok {
+	if cli, ok := c.clients[cluster]; ok {
 		return cli
 	}
 
-	// cache miss
 	cfg := rest.CopyConfig(c.baseConfig)
 	cfg.Host += cluster.RequestPath()
 	cli, err := client.New(cfg, c.opts)
 	if err != nil {
 		panic(fmt.Errorf("failed to create client for cluster %s: %w", cluster, err))
 	}
-	c.cache.Add(cluster, cli)
+	c.clients[cluster] = cli
 	return cli
 }
