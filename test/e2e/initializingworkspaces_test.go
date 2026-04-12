@@ -162,7 +162,7 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 						}
 
 						lock.Lock()
-						engaged.Insert(request.ClusterName)
+						engaged.Insert(string(request.ClusterName))
 						lock.Unlock()
 						initializer := kcpcorev1alpha1.LogicalClusterInitializer(initName)
 
@@ -175,7 +175,7 @@ var _ = Describe("InitializingWorkspaces Provider", Ordered, func() {
 								return reconcile.Result{}, err
 							}
 							initializersLock.Lock()
-							initializersRemoved.Insert(request.ClusterName)
+							initializersRemoved.Insert(string(request.ClusterName))
 							initializersLock.Unlock()
 						}
 						return reconcile.Result{}, nil

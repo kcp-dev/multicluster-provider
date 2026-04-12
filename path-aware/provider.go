@@ -70,10 +70,10 @@ func New(cfg *rest.Config, endpointSliceName string, options provider.Options) (
 }
 
 // Get returns the cluster with the given name as a cluster.Cluster.
-func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+func (p *Provider) Get(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error) {
 	if p.pathStore != nil {
-		if lcName, exists := p.pathStore.Get(clusterName); exists {
-			clusterName = lcName.String()
+		if lcName, exists := p.pathStore.Get(string(clusterName)); exists {
+			clusterName = multicluster.ClusterName(lcName.String())
 		}
 	}
 	return p.Provider.Get(ctx, clusterName)

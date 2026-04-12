@@ -36,6 +36,7 @@ import (
 
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
@@ -144,7 +145,7 @@ func main() {
 					log.Info("APIBinding logical cluster path", "path", canonicalPath)
 
 					// We should be able to resolve cluster object via path as well
-					clPath, err := mgr.GetCluster(ctx, canonicalPath)
+					clPath, err := mgr.GetCluster(ctx, multicluster.ClusterName(canonicalPath))
 					if err != nil {
 						log.Error(err, "failed to get cluster by path", "path", canonicalPath)
 						continue

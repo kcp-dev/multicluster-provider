@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
 	"sigs.k8s.io/multicluster-runtime/pkg/clusters"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	"github.com/kcp-dev/logicalcluster/v3"
 
@@ -62,13 +63,7 @@ func (mockCache *mockCache) Start(ctx context.Context) error {
 
 type mockAware struct{}
 
-func (m *mockAware) AddCluster(ctx context.Context, name string) error {
-	return nil
-}
-
-func (m *mockAware) RemoveCluster(name string) {}
-
-func (m *mockAware) Engage(ctx context.Context, name string, clstr cluster.Cluster) error {
+func (m *mockAware) Engage(ctx context.Context, name multicluster.ClusterName, clstr cluster.Cluster) error {
 	return nil
 }
 

@@ -60,7 +60,7 @@ type Factory struct {
 }
 
 // Get returns the cluster with the given name as a cluster.Cluster.
-func (f *Factory) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+func (f *Factory) Get(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error) {
 	return f.Clusters.Get(ctx, clusterName)
 }
 
