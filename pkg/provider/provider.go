@@ -172,7 +172,7 @@ func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, erro
 }
 
 // Get implements multicluster.Provider.
-func (p *Provider) Get(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+func (p *Provider) Get(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error) {
 	return p.clusters.Get(ctx, clusterName)
 }
 
@@ -270,7 +270,7 @@ func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
 
 				if ok {
 					p.log.Info("disengaging cluster", "cluster", clusterName)
-					p.clusters.Remove(clusterName.String())
+					p.clusters.Remove(multicluster.ClusterName(clusterName.String()))
 					p.handlers.RunOnDelete(cobj)
 				}
 			}
@@ -291,7 +291,7 @@ func (p *Provider) updateCluster(ctx context.Context, obj client.Object, aware m
 	clusterName := logicalcluster.From(obj)
 
 	// check if cluster already exists before creating. There is small chance for race but its ok.
-	if _, err := p.clusters.Get(ctx, clusterName.String()); err == nil {
+	if _, err := p.clusters.Get(ctx, multicluster.ClusterName(clusterName.String())); err == nil {
 		return fmt.Errorf("cluster %q already exists, skipping creation", clusterName)
 	}
 
@@ -306,7 +306,7 @@ func (p *Provider) updateCluster(ctx context.Context, obj client.Object, aware m
 		return fmt.Errorf("failed to create cluster %q: %w", clusterName, err)
 	}
 
-	if err := p.clusters.Add(ctx, clusterName.String(), cl, aware); err != nil {
+	if err := p.clusters.Add(ctx, multicluster.ClusterName(clusterName.String()), cl, aware); err != nil {
 		return fmt.Errorf("failed to add cluster %q: %w", clusterName, err)
 	}
 

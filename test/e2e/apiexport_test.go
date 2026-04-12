@@ -44,6 +44,7 @@ import (
 
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	"github.com/kcp-dev/logicalcluster/v3"
@@ -354,7 +355,7 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 					By(fmt.Sprintf("reconciling APIBinding %s in cluster %q", request.Name, request.ClusterName))
 					lock.Lock()
 					defer lock.Unlock()
-					engaged.Insert(request.ClusterName)
+					engaged.Insert(string(request.ClusterName))
 
 					cluster, err := mgr.GetCluster(ctx, request.ClusterName)
 					if err != nil {
@@ -368,12 +369,12 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 					}
 
 					eventLock.RLock()
-					recorder, ok := eventRecorders[request.ClusterName]
+					recorder, ok := eventRecorders[string(request.ClusterName)]
 					if !ok {
 						eventLock.RUnlock()
 						eventLock.Lock()
-						recorder = cluster.GetEventRecorder(request.ClusterName)
-						eventRecorders[request.ClusterName] = recorder
+						recorder = cluster.GetEventRecorder(string(request.ClusterName))
+						eventRecorders[string(request.ClusterName)] = recorder
 						eventLock.Unlock()
 					}
 
@@ -405,7 +406,7 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
 				l := &unstructured.UnstructuredList{}
 				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
-				consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
+				consumerCl, err := mgr.GetCluster(ctx, multicluster.ClusterName(consumerWS.Spec.Cluster))
 				Expect(err).NotTo(HaveOccurred())
 
 				err = consumerCl.GetCache().List(ctx, l)
@@ -422,7 +423,7 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 		})
 
 		It("sees only the stone as grey thing in the consumer clusters", func() {
-			consumerCl, err := mgr.GetCluster(ctx, consumerWS.Spec.Cluster)
+			consumerCl, err := mgr.GetCluster(ctx, multicluster.ClusterName(consumerWS.Spec.Cluster))
 			Expect(err).NotTo(HaveOccurred())
 			envtest.Eventually(GinkgoT(), func() (success bool, reason string) {
 				l := &unstructured.UnstructuredList{}
