@@ -6,6 +6,15 @@ This document describes how releases are created for multicluster-provider.
 
 The project follows [Semantic Versioning](https://semver.org/). All release tags use the `v` prefix (e.g., `v0.5.1`).
 
+This repository contains two Go modules that are tagged independently:
+
+| Module | Tag format | Example |
+|--------|-----------|---------|
+| `github.com/kcp-dev/multicluster-provider` (root) | `v<version>` | `v0.6.0` |
+| `github.com/kcp-dev/multicluster-provider/client` | `client/v<version>` | `client/v0.6.0` |
+
+Both modules must be tagged for each release.
+
 ## Release Branches
 
 Release branches are maintained for each minor version:
@@ -26,10 +35,11 @@ Patch releases are tagged from the corresponding release branch. New features ta
    git push upstream release-0.6
    ```
 
-2. Tag the release (signed):
+2. Tag both modules (signed):
    ```sh
    git tag -s v0.6.0 -m "v0.6.0"
-   git push upstream v0.6.0
+   git tag -s client/v0.6.0 -m "client/v0.6.0"
+   git push upstream v0.6.0 client/v0.6.0
    ```
 
 3. The GoReleaser workflow builds binaries for Linux and macOS (amd64/arm64) and creates a **draft** GitHub release.
@@ -45,10 +55,11 @@ Patch releases are tagged from the corresponding release branch. New features ta
    git push upstream release-0.6
    ```
 
-2. Tag and push (signed):
+2. Tag both modules and push (signed):
    ```sh
    git tag -s v0.6.1 -m "v0.6.1"
-   git push upstream v0.6.1
+   git tag -s client/v0.6.1 -m "client/v0.6.1"
+   git push upstream v0.6.1 client/v0.6.1
    ```
 
 3. Review and publish the draft GitHub release.
