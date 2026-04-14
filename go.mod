@@ -6,10 +6,10 @@ replace github.com/kcp-dev/multicluster-provider/client => ./client
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/kcp-dev/apimachinery/v2 v2.30.0
+	github.com/kcp-dev/apimachinery/v2 v2.31.0
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5
 	github.com/kcp-dev/multicluster-provider/client v0.0.0-00010101000000-000000000000
-	github.com/kcp-dev/sdk v0.30.0
+	github.com/kcp-dev/sdk v0.31.0
 	github.com/martinlindhe/base36 v1.1.1
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
@@ -18,10 +18,10 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/sync v0.18.0
 	golang.org/x/sys v0.38.0
-	k8s.io/api v0.35.0
-	k8s.io/apiextensions-apiserver v0.35.0
-	k8s.io/apimachinery v0.35.0
-	k8s.io/client-go v0.35.0
+	k8s.io/api v0.35.1
+	k8s.io/apiextensions-apiserver v0.35.1
+	k8s.io/apimachinery v0.35.1
+	k8s.io/client-go v0.35.1
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.23.3
