@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
@@ -56,6 +57,7 @@ import (
 	"github.com/kcp-dev/multicluster-provider/apiexport"
 	clusterclient "github.com/kcp-dev/multicluster-provider/client"
 	"github.com/kcp-dev/multicluster-provider/envtest"
+	mcpcache "github.com/kcp-dev/multicluster-provider/pkg/cache"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -475,6 +477,96 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			cancelGroup()
 			err := g.Wait()
 			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Describe("wildcard cache cross-cluster listing", func() {
+		var wc mcpcache.WildcardCache
+
+		BeforeAll(func() {
+			By("creating a wildcard cache against the virtual workspace endpoint")
+			vwConfig := rest.CopyConfig(kcpConfig)
+			vwConfig.Host = vwEndpoint
+			var err error
+			wc, err = mcpcache.NewWildcardCache(vwConfig, cache.Options{
+				Scheme: scheme.Scheme,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("adding a field index on label 'color' to the wildcard cache")
+			thing := &unstructured.Unstructured{}
+			thing.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Thing"})
+			err = wc.IndexField(ctx, thing, "color", func(obj client.Object) []string {
+				u := obj.(*unstructured.Unstructured)
+				return []string{u.GetLabels()["color"]}
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("starting the wildcard cache")
+			go func() {
+				defer GinkgoRecover()
+				err := wc.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+			}()
+			Expect(wc.WaitForCacheSync(ctx)).To(BeTrue())
+		})
+
+		It("lists things across all clusters", func() {
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				l := &unstructured.UnstructuredList{}
+				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+				err := wc.List(ctx, l)
+				if err != nil {
+					return false, fmt.Sprintf("failed to list things: %v", err)
+				}
+				if len(l.Items) < 2 {
+					return false, fmt.Sprintf("expected at least 2 items (stone+box), got %d\n\n%s", len(l.Items), toYAML(GinkgoT(), l.Object))
+				}
+				names := sets.NewString()
+				for _, item := range l.Items {
+					names.Insert(item.GetName())
+				}
+				if !names.HasAll("stone", "box") {
+					return false, fmt.Sprintf("expected to find 'stone' and 'box', got %v", names.List())
+				}
+				return true, ""
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to list things across all clusters")
+		})
+
+		It("lists things by field index across all clusters", func() {
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				l := &unstructured.UnstructuredList{}
+				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+				err := wc.List(ctx, l, client.MatchingFields{"color": "gray"})
+				if err != nil {
+					return false, fmt.Sprintf("failed to list things by color: %v", err)
+				}
+				if len(l.Items) != 1 {
+					return false, fmt.Sprintf("expected 1 gray item, got %d\n\n%s", len(l.Items), toYAML(GinkgoT(), l.Object))
+				}
+				if l.Items[0].GetName() != "stone" {
+					return false, fmt.Sprintf("expected 'stone', got %q", l.Items[0].GetName())
+				}
+				return true, ""
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to list things by field index across clusters")
+		})
+
+		It("lists things by field index for a different color across clusters", func() {
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				l := &unstructured.UnstructuredList{}
+				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
+				err := wc.List(ctx, l, client.MatchingFields{"color": "white"})
+				if err != nil {
+					return false, fmt.Sprintf("failed to list things by color: %v", err)
+				}
+				if len(l.Items) != 1 {
+					return false, fmt.Sprintf("expected 1 white item, got %d\n\n%s", len(l.Items), toYAML(GinkgoT(), l.Object))
+				}
+				if l.Items[0].GetName() != "box" {
+					return false, fmt.Sprintf("expected 'box', got %q", l.Items[0].GetName())
+				}
+				return true, ""
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to list things by field index for 'white' across clusters")
 		})
 	})
 
