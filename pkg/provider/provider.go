@@ -19,16 +19,16 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/go-logr/logr"
-	"golang.org/x/sync/errgroup"
 
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -39,66 +39,36 @@ import (
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
 	"github.com/kcp-dev/logicalcluster/v3"
-	apisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	apisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 
 	mcpcache "github.com/kcp-dev/multicluster-provider/pkg/cache"
 	mcrecorder "github.com/kcp-dev/multicluster-provider/pkg/events/recorder"
 	"github.com/kcp-dev/multicluster-provider/pkg/handlers"
 )
 
-var _ multicluster.Provider = &Provider{}
-
-// Clusters is an alias for clusters.Clusters[cluster.Cluster].
-type Clusters = clusters.Clusters[cluster.Cluster]
-
-// Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that represents each [logical cluster]
-// (in the kcp sense) exposed via a virtual workspace as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
-//
-// This is internal representation of the provider, use apiexport.Provider for the public one.
-// This provider deals with single virtual workspace, representinged by the rest.Config provided.
-//
-// [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
-type Provider struct {
-	config *rest.Config
-	scheme *runtime.Scheme
-	cache  mcpcache.WildcardCache
-	object client.Object
-
-	log logr.Logger
-
-	newCluster NewClusterFunc
-	clusters   *Clusters
-	handlers   handlers.Handlers
-
-	recorderManager *mcrecorder.Manager
-
-	setup      bool
-	deregister func() error
-
-	addFilter    func(obj client.Object) (bool, error)
-	updateFilter func(obj client.Object) (bool, error)
-}
-
 // NewClusterFunc allows customizing the concrete cluster implementation used for
 // every engaged cluster.
 type NewClusterFunc func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, recorderProvider mcrecorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error)
 
-// Options are the options for creating a new instance of the apiexport provider.
+// Options are the options for a provider.
 type Options struct {
-	// Scheme is the scheme to use for the provider. If this is nil, it defaults
-	// to the client-go scheme.
+	// Scheme is the scheme to use for the provider.
+	// If this is nil it defaults to the client-go scheme.
 	Scheme *runtime.Scheme
 
-	// WildcardCache is the wildcard cache to use for the provider. If this is
-	// nil, a new wildcard cache will be created for the given rest.Config.
-	WildcardCache mcpcache.WildcardCache
+	// EndpointSliceObject is the object type for the endpoint slice,
+	// that records virtual workspace URLs of different shards.
+	// If this is nil it defaults to [apisv1alpha2.APIExportEndpointSlice].
+	EndpointSliceObject client.Object
 
-	// ObjectToWatch is the object type that the provider watches via a /clusters/*
-	// wildcard endpoint to extract information about logical clusters joining and
-	// leaving the "fleet" of (logical) clustergit pushs in kcp. If this is nil, it defaults
-	// to [apisv1alpha1.APIBinding]. This might be useful when using this provider
-	// against custom virtual workspaces that are not the APIExport one but share
-	// the same endpoint semantics.
+	// ExtractURLsFromEndpointSlice is used to extract the URLs from the EndpointSliceObject.
+	// If this is nil it defaults to [DefaultExtractURLsFromEndpointSlice].
+	ExtractURLsFromEndpointSlice func(obj client.Object) ([]string, error)
+
+	// ObjectToWatch is the object type the provider watches inside of
+	// the virtual workspaces to observe logical clusters joining and
+	// leaving the virtual workspaces.
+	// If this is nil it defaults to [apisv1alpha2.APIBinding].
 	ObjectToWatch client.Object
 
 	// Log is the logger used to write any logs.
@@ -109,10 +79,6 @@ type Options struct {
 	// uses the wildcard endpoint for its cache.
 	NewCluster NewClusterFunc
 
-	// Handlers are lifecycle handlers for logical clusters managed by this provider represented
-	// by apibinding object.
-	Handlers handlers.Handlers
-
 	// AddFilter is called to filter objects to engage.
 	// If false is returned the object is not engaged.
 	AddFilter func(obj client.Object) (bool, error)
@@ -120,230 +86,360 @@ type Options struct {
 	// UpdateFilter is called to filter objects to engage.
 	// If false is returned the object is not engaged.
 	UpdateFilter func(obj client.Object) (bool, error)
+
+	// Handlers are lifecycle handlers for logical clusters managed by this provider represented
+	// by apibinding object.
+	Handlers handlers.Handlers
 }
 
-// New creates a new kcp virtual workspace provider. The provided [rest.Config]
-// must point to a virtual workspace apiserver base path, i.e. up to but without
-// the '/clusters/*' suffix. This information can be extracted from the APIExport
-// status (deprecated) or an APIExportEndpointSlice status.
-func New(cfg *rest.Config, clusters *Clusters, options Options) (*Provider, error) {
-	// Do the defaulting controller-runtime would do for those fields we need.
-	if options.Scheme == nil {
-		options.Scheme = scheme.Scheme
-	}
-	if options.WildcardCache == nil {
-		var err error
-		options.WildcardCache, err = mcpcache.NewWildcardCache(cfg, cache.Options{
-			Scheme: options.Scheme,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create wildcard cache: %w", err)
-		}
-	}
-	if options.ObjectToWatch == nil {
-		options.ObjectToWatch = &apisv1alpha1.APIBinding{}
+func (opts *Options) defaults() {
+	if opts.Scheme == nil {
+		opts.Scheme = scheme.Scheme
 	}
 
-	if options.NewCluster == nil {
-		options.NewCluster = mcpcache.NewScopedCluster
+	if opts.EndpointSliceObject == nil {
+		opts.EndpointSliceObject = &apisv1alpha2.APIExportEndpointSlice{}
 	}
 
-	if options.Log == nil {
-		logger := log.Log.WithName("kcp-apiexport-internal-provider")
-		options.Log = &logger
+	if opts.ExtractURLsFromEndpointSlice == nil {
+		opts.ExtractURLsFromEndpointSlice = DefaultExtractURLsFromEndpointSlice
 	}
 
-	return &Provider{
-		config:   cfg,
-		scheme:   options.Scheme,
-		cache:    options.WildcardCache,
-		object:   options.ObjectToWatch,
-		handlers: options.Handlers,
-		log:      *options.Log,
+	if opts.ObjectToWatch == nil {
+		opts.ObjectToWatch = &apisv1alpha2.APIBinding{}
+	}
 
-		clusters:   clusters,
-		newCluster: options.NewCluster,
+	if opts.Log == nil {
+		logger := log.Log.WithName("kcp-provider")
+		opts.Log = &logger
+	}
 
-		recorderManager: mcrecorder.NewManager(options.Scheme, options.Log.WithName("recorder-manager")),
-
-		addFilter:    options.AddFilter,
-		updateFilter: options.UpdateFilter,
-	}, nil
+	if opts.NewCluster == nil {
+		opts.NewCluster = mcpcache.NewScopedCluster
+	}
 }
 
-// Get implements multicluster.Provider.
-func (p *Provider) Get(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error) {
-	return p.clusters.Get(ctx, clusterName)
+var _ multicluster.Provider = &Provider{}
+
+// Provider is a [sigs.k8s.io/multicluster-runtime/pkg/multicluster.Provider] that
+// yields each [logical cluster] (in the kcp sense) exposed via a virtual workspace
+// as a cluster in the [sigs.k8s.io/multicluster-runtime] sense.
+//
+// [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
+type Provider struct {
+	opts Options
+	// config is the config pointing to the control plane where the endpoint slice resides.
+	config *rest.Config
+
+	// Clusters keeps track of all engaged clusters.
+	Clusters clusters.Clusters[cluster.Cluster]
+
+	// cache for the control plane where the endpoint slice resides
+	cache cache.Cache
+
+	// recorderManager manages per-cluster event recorder providers, creating
+	// cluster-scoped broadcasters on engagement and stopping them on disengagement.
+	recorderManager *mcrecorder.Manager
+
+	// watchedEndpoints keeps track of which endpoints in the endpoint
+	// slice are already being watched.
+	watchedEndpoints map[string]*watchedEndpoint
+
+	// watchEndpointFunc starts watching an endpoint.
+	// Defaults to p.watchEndpoint; override for testing.
+	watchEndpointFunc func(ctx context.Context, url string, aware multicluster.Aware) (*watchedEndpoint, error)
+
+	// aggregateCache provides an aggregated view across all shard caches.
+	aggregateCache *mcpcache.AggregateCache
 }
 
-// IndexField implements multicluster.Provider.
-func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	return p.cache.IndexField(ctx, obj, field, extractValue)
-}
+// NewProvider returns a Provider.
+// The config must point at the control plane containing the endpoint slice object.
+func NewProvider(cfg *rest.Config, endpointSliceName string, opts Options) (*Provider, error) {
+	opts.defaults()
 
-// Setup initializes the Provider.
-// Calling setup multiple times with different awares is not valid.
-func (p *Provider) Setup(ctx context.Context, aware multicluster.Aware) error {
-	if p.setup {
-		return nil
-	}
-	p.setup = true
+	p := new(Provider)
+	p.opts = opts
+	p.config = cfg
 
-	// Watch logical clusters and engage them as clusters in multicluster-runtime.
-	inf, err := p.cache.GetInformer(ctx, p.object, cache.BlockUntilSynced(false))
-	if err != nil {
-		return fmt.Errorf("failed to get %T informer: %w", p.object, err)
-	}
-	shInf, _, _, err := p.cache.GetSharedInformer(p.object)
-	if err != nil {
-		return fmt.Errorf("failed to get shared informer: %w", err)
-	}
-	registration, err := inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj any) {
-			cobj, ok := obj.(client.Object)
-			if !ok {
-				klog.Errorf("unexpected object type %T", obj)
-				return
-			}
-			if p.addFilter != nil {
-				accept, err := p.addFilter(cobj)
-				if err != nil {
-					klog.Errorf("error in filter function: %v", err)
-					return
-				}
-				if !accept {
-					return
-				}
-			}
-			if err := p.updateCluster(ctx, cobj, aware); err != nil {
-				klog.Errorf("unexpected error handling event: %v", err)
-			}
-			p.handlers.RunOnAdd(cobj)
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			cobj, ok := newObj.(client.Object)
-			if !ok {
-				klog.Errorf("unexpected object type %T", newObj)
-				return
-			}
-			if p.updateFilter != nil {
-				accept, err := p.updateFilter(cobj)
-				if err != nil {
-					klog.Errorf("error in filter function: %v", err)
-					return
-				}
-				if !accept {
-					return
-				}
-			}
-			if err := p.updateCluster(ctx, cobj, aware); err != nil {
-				klog.Errorf("unexpected error handling event: %v", err)
-			}
-			p.handlers.RunOnUpdate(oldObj.(client.Object), cobj)
-		},
-		DeleteFunc: func(obj any) {
-			cobj, ok := obj.(client.Object)
-			if !ok {
-				tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown)
-				if !ok {
-					klog.Errorf("Couldn't get object from tombstone %#v", obj)
-					return
-				}
-				cobj, ok = tombstone.Obj.(client.Object)
-				if !ok {
-					klog.Errorf("Tombstone contained object that is not expected %#v", obj)
-					return
-				}
-			}
-			clusterName := logicalcluster.From(cobj)
+	p.Clusters = clusters.New[cluster.Cluster]()
 
-			// check if there is no object left in the index.
-			keys, err := shInf.GetIndexer().IndexKeys(kcpcache.ClusterIndexName, clusterName.String())
-			if err != nil {
-				p.log.Error(err, "failed to get index keys", "cluster", clusterName)
-				return
-			}
-
-			if len(keys) == 0 {
-				// shut down individual event broadaster
-				p.recorderManager.StopProvider(ctx, clusterName)
-
-				if ok {
-					p.log.Info("disengaging cluster", "cluster", clusterName)
-					p.clusters.Remove(multicluster.ClusterName(clusterName.String()))
-					p.handlers.RunOnDelete(cobj)
-				}
-			}
+	c, err := cache.New(p.config, cache.Options{
+		Scheme: p.opts.Scheme,
+		ByObject: map[client.Object]cache.ByObject{
+			p.opts.EndpointSliceObject: {
+				Field: fields.SelectorFromSet(fields.Set{"metadata.name": endpointSliceName}),
+			},
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to add EventHandler: %w", err)
+		return nil, fmt.Errorf("error building cache for %T %q: %w", p.opts.EndpointSliceObject, endpointSliceName, err)
+	}
+	p.cache = c
+
+	p.recorderManager = mcrecorder.NewManager(p.opts.Scheme, p.opts.Log.WithName("recorder-manager"))
+	p.watchedEndpoints = map[string]*watchedEndpoint{}
+	p.watchEndpointFunc = p.watchEndpoint
+	p.aggregateCache = mcpcache.NewAggregateCache()
+
+	return p, nil
+}
+
+// Get returns the cluster with the given name as a cluster.Cluster.
+func (p *Provider) Get(ctx context.Context, clusterName multicluster.ClusterName) (cluster.Cluster, error) {
+	return p.Clusters.Get(ctx, clusterName)
+}
+
+// Lister returns a cache.Lister that lists objects across all shards.
+func (p *Provider) Lister() mcpcache.Lister {
+	return p.aggregateCache
+}
+
+// IndexField adds an indexer to the clusters managed by this provider.
+func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return p.Clusters.IndexField(ctx, obj, field, extractValue)
+}
+
+// Start starts the provider, watches for VW endpoints and
+func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer func() {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		p.recorderManager.Stop(ctx)
+	}()
+
+	informer, err := p.cache.GetInformer(ctx, p.opts.EndpointSliceObject, cache.BlockUntilSynced(false))
+	if err != nil {
+		return err
 	}
 
-	p.deregister = func() error {
-		return inf.RemoveEventHandler(registration)
+	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj any) {
+			t := obj.(client.Object)
+			p.opts.Log.Info("new endpointslice object", "object", t)
+			p.endpointSliceUpdate(ctx, aware, t)
+		},
+		UpdateFunc: func(oldObj any, newObj any) {
+			t := newObj.(client.Object)
+			p.opts.Log.Info("updated endpointslice object", "object", t)
+			p.endpointSliceUpdate(ctx, aware, t)
+		},
+		DeleteFunc: func(obj any) {
+			p.opts.Log.Info("deleted endpointslice object", "object", obj)
+			p.stopAllWatchedEndpoints()
+		},
+	})
+	if err != nil {
+		return err
 	}
+	defer func() {
+		if err := informer.RemoveEventHandler(handler); err != nil {
+			p.opts.Log.Error(err, "failed to remove event handler")
+		}
+	}()
+
+	p.opts.Log.Info("starting provider")
+	return p.cache.Start(ctx)
+}
+
+func (p *Provider) endpointSliceUpdate(ctx context.Context, aware multicluster.Aware, obj client.Object) {
+	urls, err := p.opts.ExtractURLsFromEndpointSlice(obj)
+	if err != nil {
+		p.opts.Log.Error(err, "error getting virtual workspace URLs from endpointslice object", "obj", obj, "name", obj.GetName())
+		return
+	}
+
+	for _, url := range urls {
+		if _, ok := p.watchedEndpoints[url]; ok {
+			// endpoint is already handled
+			continue
+		}
+
+		we, err := p.watchEndpointFunc(ctx, url, aware)
+		if err != nil {
+			p.opts.Log.Error(err, "failed to watch endpoint", "url", url)
+			continue
+		}
+		p.watchedEndpoints[url] = we
+		p.aggregateCache.AddCache(url, we.wildcardCache)
+	}
+
+	// check which watched urls can be stopped
+	for watchedURL, we := range p.watchedEndpoints {
+		if slices.Contains(urls, watchedURL) {
+			continue
+		}
+		// URL no longer present in endpoint slice, cancel watch
+		we.cancel()
+		p.aggregateCache.RemoveCache(watchedURL)
+		delete(p.watchedEndpoints, watchedURL)
+	}
+}
+
+func (p *Provider) stopAllWatchedEndpoints() {
+	for watchedURL, we := range p.watchedEndpoints {
+		we.cancel()
+		p.aggregateCache.RemoveCache(watchedURL)
+	}
+	p.watchedEndpoints = make(map[string]*watchedEndpoint)
+}
+
+type watchedEndpoint struct {
+	cancel        context.CancelFunc
+	provider      *Provider
+	config        *rest.Config
+	wildcardCache mcpcache.WildcardCache
+	logger        *logr.Logger
+}
+
+func (p *Provider) watchEndpoint(ctx context.Context, url string, aware multicluster.Aware) (*watchedEndpoint, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	we := new(watchedEndpoint)
+	we.cancel = cancel
+	we.provider = p
+
+	we.config = rest.CopyConfig(p.config)
+	we.config.Host = url
+
+	wildcardCache, err := mcpcache.NewWildcardCache(we.config, cache.Options{Scheme: we.provider.opts.Scheme})
+	if err != nil {
+		we.cancel()
+		return nil, fmt.Errorf("error starting cache: %w", err)
+	}
+	we.wildcardCache = wildcardCache
+
+	logger := p.opts.Log.WithValues("url", url)
+	we.logger = &logger
+
+	if err := we.start(ctx, aware); err != nil {
+		we.cancel()
+		we.logger.Error(err, "error starting endpoint watcher")
+		return nil, err
+	}
+
+	return we, nil
+}
+
+func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) error {
+	informer, err := we.wildcardCache.GetInformer(ctx, we.provider.opts.ObjectToWatch, cache.BlockUntilSynced(false))
+	if err != nil {
+		return fmt.Errorf("failed to get %T informer: %w", we.provider.opts.ObjectToWatch, err)
+	}
+
+	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj any) {
+			t := obj.(client.Object)
+			we.logger.Info("new endpoint object", "object", t)
+			if filter := we.provider.opts.AddFilter; filter != nil {
+				accept, err := filter(t)
+				if err != nil {
+					we.logger.Error(err, "error in filter function")
+					return
+				}
+				if !accept {
+					return
+				}
+			}
+			if err := we.update(ctx, t, aware); err != nil {
+				we.logger.Error(err, "unexpected error handling add event")
+			}
+			we.provider.opts.Handlers.RunOnAdd(t)
+		},
+		UpdateFunc: func(oldObj any, newObj any) {
+			t := newObj.(client.Object)
+			we.logger.Info("updated endpoint object", "object", t)
+			if filter := we.provider.opts.UpdateFilter; filter != nil {
+				accept, err := filter(t)
+				if err != nil {
+					we.logger.Error(err, "error in filter function")
+					return
+				}
+				if !accept {
+					return
+				}
+			}
+			if err := we.update(ctx, t, aware); err != nil {
+				we.logger.Error(err, "unexpected error handling update event")
+			}
+			we.provider.opts.Handlers.RunOnUpdate(oldObj.(client.Object), t)
+		},
+		DeleteFunc: func(obj any) {
+			t, ok := obj.(client.Object)
+			if !ok {
+				tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown)
+				if !ok {
+					we.logger.Error(nil, "couldn't get object from tombstone", "obj", obj)
+					return
+				}
+				t, ok = tombstone.Obj.(client.Object)
+				if !ok {
+					we.logger.Error(nil, "tombstone contained object that is not expected", "obj", obj)
+					return
+				}
+			}
+			we.logger.Info("deleted endpoint object", "object", obj)
+			clusterName := logicalcluster.From(t)
+
+			shInf, _, _, err := we.wildcardCache.GetSharedInformer(we.provider.opts.ObjectToWatch)
+			if err != nil {
+				we.logger.Error(err, "failed to get shared informer for delete check", "cluster", clusterName)
+				return
+			}
+
+			keys, err := shInf.GetIndexer().IndexKeys(kcpcache.ClusterIndexName, clusterName.String())
+			if err != nil {
+				we.logger.Error(err, "failed to get index keys", "cluster", clusterName)
+				return
+			}
+
+			if len(keys) > 0 {
+				return
+			}
+
+			we.provider.recorderManager.StopProvider(ctx, clusterName)
+			we.provider.Clusters.Remove(multicluster.ClusterName(clusterName.String()))
+			we.provider.opts.Handlers.RunOnDelete(t)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("error adding event handler: %w", err)
+	}
+
+	go func() {
+		defer informer.RemoveEventHandler(handler) //nolint:errcheck
+		if err := we.wildcardCache.Start(ctx); err != nil {
+			we.logger.Error(err, "error in cache for endpoint")
+		}
+	}()
 
 	return nil
 }
 
-func (p *Provider) updateCluster(ctx context.Context, obj client.Object, aware multicluster.Aware) error {
+func (we *watchedEndpoint) update(ctx context.Context, obj client.Object, aware multicluster.Aware) error {
 	clusterName := logicalcluster.From(obj)
 
 	// check if cluster already exists before creating. There is small chance for race but its ok.
-	if _, err := p.clusters.Get(ctx, multicluster.ClusterName(clusterName.String())); err == nil {
-		return fmt.Errorf("cluster %q already exists, skipping creation", clusterName)
+	if _, err := we.provider.Clusters.Get(ctx, multicluster.ClusterName(clusterName.String())); err == nil {
+		return nil
 	}
 
-	recorder, err := p.recorderManager.GetProvider(p.config, clusterName)
+	recorder, err := we.provider.recorderManager.GetProvider(we.config, clusterName)
 	if err != nil {
 		return fmt.Errorf("failed to get broadcaster: %w", err)
 	}
 
 	// create new scoped cluster.
-	cl, err := p.newCluster(p.config, clusterName, p.cache, p.scheme, recorder)
+	cl, err := we.provider.opts.NewCluster(we.config, clusterName, we.wildcardCache, we.provider.opts.Scheme, recorder)
 	if err != nil {
 		return fmt.Errorf("failed to create cluster %q: %w", clusterName, err)
 	}
 
-	if err := p.clusters.Add(ctx, multicluster.ClusterName(clusterName.String()), cl, aware); err != nil {
+	if err := we.provider.Clusters.Add(ctx, multicluster.ClusterName(clusterName.String()), cl, aware); err != nil {
 		return fmt.Errorf("failed to add cluster %q: %w", clusterName, err)
 	}
 
 	return nil
-}
-
-// Start starts the provider and blocks.
-// Start will call Setup if it has not been called before.
-func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
-	if err := p.Setup(ctx, aware); err != nil {
-		return err
-	}
-
-	g, ctx := errgroup.WithContext(ctx)
-
-	g.Go(func() error { return p.cache.Start(ctx) })
-	g.Go(func() error {
-		// wait for context stop and try to shut down event broadcasters
-		select {
-		case <-ctx.Done():
-			shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			p.recorderManager.Stop(shutdownCtx)
-			if p.deregister != nil {
-				return p.deregister()
-			}
-		default:
-		}
-		return nil
-	})
-
-	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	if _, err := p.cache.GetInformer(syncCtx, p.object, cache.BlockUntilSynced(true)); err != nil {
-		return fmt.Errorf("failed to sync %T informer: %w", p.object, err)
-	}
-
-	return g.Wait()
 }

@@ -21,17 +21,12 @@ import (
 
 	"github.com/go-logr/logr"
 
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"sigs.k8s.io/multicluster-runtime/pkg/clusters"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	"github.com/kcp-dev/logicalcluster/v3"
@@ -53,7 +48,7 @@ var _ multicluster.ProviderRunnable = &Provider{}
 //
 // [logical cluster]: https://docs.kcp.io/kcp/latest/concepts/terminology/#logical-cluster
 type Provider struct {
-	provider.Factory
+	*provider.Provider
 }
 
 // Options are the options for creating a new instance of the initializing workspaces provider.
@@ -81,11 +76,6 @@ type Options struct {
 
 // New creates a new kcp initializing workspaces provider.
 func New(cfg *rest.Config, workspaceTypeName string, options Options) (*Provider, error) {
-	// Do the defaulting controller-runtime would do for those fields we need.
-	if options.Scheme == nil {
-		options.Scheme = scheme.Scheme
-	}
-
 	if options.ObjectToWatch == nil {
 		options.ObjectToWatch = &kcpcorev1alpha1.LogicalCluster{}
 	}
@@ -94,51 +84,30 @@ func New(cfg *rest.Config, workspaceTypeName string, options Options) (*Provider
 		options.Log = ptr.To(log.Log.WithName("kcp-initializingworkspaces-cluster-provider"))
 	}
 
-	c, err := cache.New(cfg, cache.Options{
-		Scheme: options.Scheme,
-		ByObject: map[client.Object]cache.ByObject{
-			&kcptenancyv1alpha1.WorkspaceType{}: {
-				Field: fields.SelectorFromSet(fields.Set{"metadata.name": workspaceTypeName}),
-			},
+	p, err := provider.NewProvider(cfg, workspaceTypeName, provider.Options{
+		Scheme:              options.Scheme,
+		EndpointSliceObject: &kcptenancyv1alpha1.WorkspaceType{},
+		ExtractURLsFromEndpointSlice: func(obj client.Object) ([]string, error) {
+			wst := obj.(*kcptenancyv1alpha1.WorkspaceType)
+			var urls []string
+			for _, endpoint := range wst.Status.VirtualWorkspaces {
+				if !strings.Contains(endpoint.URL, "/initializingworkspaces/") {
+					continue
+				}
+				urls = append(urls, endpoint.URL)
+			}
+			return urls, nil
+		},
+		ObjectToWatch: options.ObjectToWatch,
+		Log:           options.Log,
+		Handlers:      options.Handlers,
+		NewCluster: func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, _ recorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error) {
+			return mcpcache.NewScopedInitializingCluster(cfg, clusterName, wildcardCA, scheme)
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &Provider{
-		Factory: provider.Factory{
-			Clusters:  ptr.To(clusters.New[cluster.Cluster]()),
-			Providers: provider.NewProviders(),
-
-			Log:      *options.Log,
-			Handlers: options.Handlers,
-
-			GetVWs: func(obj client.Object) ([]string, error) {
-				wst := obj.(*kcptenancyv1alpha1.WorkspaceType)
-				var urls []string
-				for _, endpoint := range wst.Status.VirtualWorkspaces {
-					// The slice contains both the URLs for the initializingworkspaces and the
-					// terminatingworkspaces virtual workspace, so we need to filter.
-					if !strings.Contains(endpoint.URL, "/initializingworkspaces/") {
-						continue
-					}
-					urls = append(urls, endpoint.URL)
-				}
-				return urls, nil
-			},
-
-			Config: cfg,
-			Scheme: options.Scheme,
-			Outer:  &kcptenancyv1alpha1.WorkspaceType{},
-			Inner:  options.ObjectToWatch,
-			Cache:  c,
-			// ensure the generic provider builds a per-cluster cache instead of a wildcard-based
-			// cache, since this virtual workspace does not offer anything but logicalclusters on
-			// the wildcard endpoint
-			NewCluster: func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, _ recorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error) {
-				return mcpcache.NewScopedInitializingCluster(cfg, clusterName, wildcardCA, scheme)
-			},
-		},
-	}, nil
+	return &Provider{Provider: p}, nil
 }
