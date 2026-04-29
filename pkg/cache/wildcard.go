@@ -178,6 +178,28 @@ func (c *wildcardCache) GetSharedInformer(obj runtime.Object) (k8scache.SharedIn
 	return sii, gvk, mapping.Scope.Name(), nil
 }
 
+// List lists objects across all logical clusters in this wildcard cache.
+func (c *wildcardCache) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	inf, gvk, scope, err := c.GetSharedInformer(list)
+	if err != nil {
+		return err
+	}
+
+	indexer := inf.GetIndexer()
+	// Technically not needed since the indexer should always be cluster
+	// aware but better safe than sorry.
+	_, isClusterAware := indexer.GetIndexers()[kcpcache.ClusterAndNamespaceIndexName]
+
+	cr := cacheReader{
+		indexer:          indexer,
+		groupVersionKind: gvk,
+		scopeName:        scope,
+		isClusterAware:   isClusterAware,
+		clusterName:      logicalcluster.Name("*"),
+	}
+	return cr.List(ctx, list, opts...)
+}
+
 // IndexField adds an index for the given object kind.
 func (c *wildcardCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
