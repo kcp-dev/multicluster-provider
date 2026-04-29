@@ -38,7 +38,6 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
@@ -57,7 +56,6 @@ import (
 	"github.com/kcp-dev/multicluster-provider/apiexport"
 	clusterclient "github.com/kcp-dev/multicluster-provider/client"
 	"github.com/kcp-dev/multicluster-provider/envtest"
-	mcpcache "github.com/kcp-dev/multicluster-provider/pkg/cache"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -473,49 +471,11 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see event on APIBinding in %s", other.String())
 		})
 
-		AfterAll(func() {
-			cancelGroup()
-			err := g.Wait()
-			Expect(err).NotTo(HaveOccurred())
-		})
-	})
-
-	Describe("wildcard cache cross-cluster listing", func() {
-		var wc mcpcache.WildcardCache
-
-		BeforeAll(func() {
-			By("creating a wildcard cache against the virtual workspace endpoint")
-			vwConfig := rest.CopyConfig(kcpConfig)
-			vwConfig.Host = vwEndpoint
-			var err error
-			wc, err = mcpcache.NewWildcardCache(vwConfig, cache.Options{
-				Scheme: scheme.Scheme,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("adding a field index on label 'color' to the wildcard cache")
-			thing := &unstructured.Unstructured{}
-			thing.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Thing"})
-			err = wc.IndexField(ctx, thing, "color", func(obj client.Object) []string {
-				u := obj.(*unstructured.Unstructured)
-				return []string{u.GetLabels()["color"]}
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("starting the wildcard cache")
-			go func() {
-				defer GinkgoRecover()
-				err := wc.Start(ctx)
-				Expect(err).NotTo(HaveOccurred())
-			}()
-			Expect(wc.WaitForCacheSync(ctx)).To(BeTrue())
-		})
-
-		It("lists things across all clusters", func() {
+		It("lists things across all clusters via provider.Lister", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				l := &unstructured.UnstructuredList{}
 				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
-				err := wc.List(ctx, l)
+				err := p.Lister().List(ctx, l)
 				if err != nil {
 					return false, fmt.Sprintf("failed to list things: %v", err)
 				}
@@ -533,11 +493,11 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to list things across all clusters")
 		})
 
-		It("lists things by field index across all clusters", func() {
+		It("lists things by field index across all clusters via provider.Lister", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				l := &unstructured.UnstructuredList{}
 				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
-				err := wc.List(ctx, l, client.MatchingFields{"color": "gray"})
+				err := p.Lister().List(ctx, l, client.MatchingFields{"color": "gray"})
 				if err != nil {
 					return false, fmt.Sprintf("failed to list things by color: %v", err)
 				}
@@ -551,11 +511,11 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to list things by field index across clusters")
 		})
 
-		It("lists things by field index for a different color across clusters", func() {
+		It("lists things by field index for a different color across clusters via provider.Lister", func() {
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				l := &unstructured.UnstructuredList{}
 				l.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ThingList"})
-				err := wc.List(ctx, l, client.MatchingFields{"color": "white"})
+				err := p.Lister().List(ctx, l, client.MatchingFields{"color": "white"})
 				if err != nil {
 					return false, fmt.Sprintf("failed to list things by color: %v", err)
 				}
@@ -567,6 +527,12 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 				}
 				return true, ""
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to list things by field index for 'white' across clusters")
+		})
+
+		AfterAll(func() {
+			cancelGroup()
+			err := g.Wait()
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 
