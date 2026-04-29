@@ -140,6 +140,10 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 		return fmt.Errorf("continue list option is not supported by the cache")
 	}
 
+	if c.isClusterAware && c.clusterName.Empty() {
+		return fmt.Errorf("cluster-aware cache requires a cluster name for listing")
+	}
+
 	switch {
 	case listOpts.FieldSelector != nil:
 		requiresExact := requiresExactMatch(listOpts.FieldSelector)
@@ -151,16 +155,22 @@ func (c *cacheReader) List(ctx context.Context, out client.ObjectList, opts ...c
 		// namespace.
 		objs, err = byIndexes(c.indexer, listOpts.FieldSelector.Requirements(), c.clusterName, listOpts.Namespace, c.isClusterAware)
 	case listOpts.Namespace != "":
-		if c.isClusterAware && !c.clusterName.Empty() {
-			objs, err = c.indexer.ByIndex(kcpcache.ClusterAndNamespaceIndexName, kcpcache.ClusterAndNamespaceIndexKey(c.clusterName, listOpts.Namespace))
-		} else {
+		switch {
+		case !c.isClusterAware:
 			objs, err = c.indexer.ByIndex(cache.NamespaceIndex, listOpts.Namespace)
+		case c.clusterName.String() == "*":
+			objs, err = c.indexer.ByIndex(cache.NamespaceIndex, listOpts.Namespace)
+		default:
+			objs, err = c.indexer.ByIndex(kcpcache.ClusterAndNamespaceIndexName, kcpcache.ClusterAndNamespaceIndexKey(c.clusterName, listOpts.Namespace))
 		}
 	default:
-		if c.isClusterAware && !c.clusterName.Empty() {
-			objs, err = c.indexer.ByIndex(kcpcache.ClusterIndexName, kcpcache.ClusterIndexKey(c.clusterName))
-		} else {
+		switch {
+		case !c.isClusterAware:
 			objs = c.indexer.List()
+		case c.clusterName.String() == "*":
+			objs = c.indexer.List()
+		default:
+			objs, err = c.indexer.ByIndex(kcpcache.ClusterIndexName, kcpcache.ClusterIndexKey(c.clusterName))
 		}
 	}
 	if err != nil {
