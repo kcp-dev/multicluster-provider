@@ -146,8 +146,8 @@ type Provider struct {
 	watchedEndpoints map[string]*watchedEndpoint
 
 	// watchEndpointFunc starts watching an endpoint.
-	// Defaults to p.watchEndpoint; override for testing.
-	watchEndpointFunc func(ctx context.Context, url string, aware multicluster.Aware) (*watchedEndpoint, error)
+	// Defaults to newWatchedEndpoint; override for testing.
+	watchEndpointFunc func(ctx context.Context, cfg *rest.Config, aware multicluster.Aware) (*watchedEndpoint, error)
 
 	// aggregateCache provides an aggregated view across all shard caches.
 	aggregateCache *mcpcache.AggregateCache
@@ -179,7 +179,16 @@ func NewProvider(cfg *rest.Config, endpointSliceName string, opts Options) (*Pro
 
 	p.recorderManager = mcrecorder.NewManager(p.opts.Scheme, p.opts.Log.WithName("recorder-manager"))
 	p.watchedEndpoints = map[string]*watchedEndpoint{}
-	p.watchEndpointFunc = p.watchEndpoint
+	p.watchEndpointFunc = func(ctx context.Context, cfg *rest.Config, aware multicluster.Aware) (*watchedEndpoint, error) {
+		return newWatchedEndpoint(ctx, cfg, aware, &watchedEndpoint{
+			opts:                 p.opts,
+			getCluster:           p.Clusters.Get,
+			addCluster:           p.Clusters.Add,
+			removeCluster:        p.Clusters.Remove,
+			getRecorderProvider:  p.recorderManager.GetProvider,
+			stopRecorderProvider: p.recorderManager.StopProvider,
+		})
+	}
 	p.aggregateCache = mcpcache.NewAggregateCache()
 
 	return p, nil
@@ -257,7 +266,10 @@ func (p *Provider) endpointSliceUpdate(ctx context.Context, aware multicluster.A
 			continue
 		}
 
-		we, err := p.watchEndpointFunc(ctx, url, aware)
+		cfg := rest.CopyConfig(p.config)
+		cfg.Host = url
+
+		we, err := p.watchEndpointFunc(ctx, cfg, aware)
 		if err != nil {
 			p.opts.Log.Error(err, "failed to watch endpoint", "url", url)
 			continue
@@ -288,30 +300,31 @@ func (p *Provider) stopAllWatchedEndpoints() {
 
 type watchedEndpoint struct {
 	cancel        context.CancelFunc
-	provider      *Provider
+	opts          Options
 	config        *rest.Config
 	wildcardCache mcpcache.WildcardCache
 	logger        *logr.Logger
+
+	getCluster           func(ctx context.Context, name multicluster.ClusterName) (cluster.Cluster, error)
+	addCluster           func(ctx context.Context, name multicluster.ClusterName, cl cluster.Cluster, aware multicluster.Aware) error
+	removeCluster        func(name multicluster.ClusterName)
+	getRecorderProvider  func(cfg *rest.Config, clusterName logicalcluster.Name) (*mcrecorder.Provider, error)
+	stopRecorderProvider func(ctx context.Context, clusterName logicalcluster.Name)
 }
 
-func (p *Provider) watchEndpoint(ctx context.Context, url string, aware multicluster.Aware) (*watchedEndpoint, error) {
+func newWatchedEndpoint(ctx context.Context, cfg *rest.Config, aware multicluster.Aware, we *watchedEndpoint) (*watchedEndpoint, error) {
 	ctx, cancel := context.WithCancel(ctx)
-
-	we := new(watchedEndpoint)
 	we.cancel = cancel
-	we.provider = p
+	we.config = cfg
 
-	we.config = rest.CopyConfig(p.config)
-	we.config.Host = url
-
-	wildcardCache, err := mcpcache.NewWildcardCache(we.config, cache.Options{Scheme: we.provider.opts.Scheme})
+	wildcardCache, err := mcpcache.NewWildcardCache(we.config, cache.Options{Scheme: we.opts.Scheme})
 	if err != nil {
 		we.cancel()
 		return nil, fmt.Errorf("error starting cache: %w", err)
 	}
 	we.wildcardCache = wildcardCache
 
-	logger := p.opts.Log.WithValues("url", url)
+	logger := we.opts.Log.WithValues("url", cfg.Host)
 	we.logger = &logger
 
 	if err := we.start(ctx, aware); err != nil {
@@ -324,16 +337,16 @@ func (p *Provider) watchEndpoint(ctx context.Context, url string, aware multiclu
 }
 
 func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) error {
-	informer, err := we.wildcardCache.GetInformer(ctx, we.provider.opts.ObjectToWatch, cache.BlockUntilSynced(false))
+	informer, err := we.wildcardCache.GetInformer(ctx, we.opts.ObjectToWatch, cache.BlockUntilSynced(false))
 	if err != nil {
-		return fmt.Errorf("failed to get %T informer: %w", we.provider.opts.ObjectToWatch, err)
+		return fmt.Errorf("failed to get %T informer: %w", we.opts.ObjectToWatch, err)
 	}
 
 	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			t := obj.(client.Object)
 			we.logger.Info("new endpoint object", "object", t)
-			if filter := we.provider.opts.AddFilter; filter != nil {
+			if filter := we.opts.AddFilter; filter != nil {
 				accept, err := filter(t)
 				if err != nil {
 					we.logger.Error(err, "error in filter function")
@@ -346,12 +359,12 @@ func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) 
 			if err := we.update(ctx, t, aware); err != nil {
 				we.logger.Error(err, "unexpected error handling add event")
 			}
-			we.provider.opts.Handlers.RunOnAdd(t)
+			we.opts.Handlers.RunOnAdd(t)
 		},
 		UpdateFunc: func(oldObj any, newObj any) {
 			t := newObj.(client.Object)
 			we.logger.Info("updated endpoint object", "object", t)
-			if filter := we.provider.opts.UpdateFilter; filter != nil {
+			if filter := we.opts.UpdateFilter; filter != nil {
 				accept, err := filter(t)
 				if err != nil {
 					we.logger.Error(err, "error in filter function")
@@ -364,7 +377,7 @@ func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) 
 			if err := we.update(ctx, t, aware); err != nil {
 				we.logger.Error(err, "unexpected error handling update event")
 			}
-			we.provider.opts.Handlers.RunOnUpdate(oldObj.(client.Object), t)
+			we.opts.Handlers.RunOnUpdate(oldObj.(client.Object), t)
 		},
 		DeleteFunc: func(obj any) {
 			t, ok := obj.(client.Object)
@@ -383,7 +396,7 @@ func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) 
 			we.logger.Info("deleted endpoint object", "object", obj)
 			clusterName := logicalcluster.From(t)
 
-			shInf, _, _, err := we.wildcardCache.GetSharedInformer(we.provider.opts.ObjectToWatch)
+			shInf, _, _, err := we.wildcardCache.GetSharedInformer(we.opts.ObjectToWatch)
 			if err != nil {
 				we.logger.Error(err, "failed to get shared informer for delete check", "cluster", clusterName)
 				return
@@ -399,9 +412,9 @@ func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) 
 				return
 			}
 
-			we.provider.recorderManager.StopProvider(ctx, clusterName)
-			we.provider.Clusters.Remove(multicluster.ClusterName(clusterName.String()))
-			we.provider.opts.Handlers.RunOnDelete(t)
+			we.stopRecorderProvider(ctx, clusterName)
+			we.removeCluster(multicluster.ClusterName(clusterName.String()))
+			we.opts.Handlers.RunOnDelete(t)
 		},
 	})
 	if err != nil {
@@ -422,22 +435,22 @@ func (we *watchedEndpoint) update(ctx context.Context, obj client.Object, aware 
 	clusterName := logicalcluster.From(obj)
 
 	// check if cluster already exists before creating. There is small chance for race but its ok.
-	if _, err := we.provider.Clusters.Get(ctx, multicluster.ClusterName(clusterName.String())); err == nil {
+	if _, err := we.getCluster(ctx, multicluster.ClusterName(clusterName.String())); err == nil {
 		return nil
 	}
 
-	recorder, err := we.provider.recorderManager.GetProvider(we.config, clusterName)
+	recorder, err := we.getRecorderProvider(we.config, clusterName)
 	if err != nil {
 		return fmt.Errorf("failed to get broadcaster: %w", err)
 	}
 
 	// create new scoped cluster.
-	cl, err := we.provider.opts.NewCluster(we.config, clusterName, we.wildcardCache, we.provider.opts.Scheme, recorder)
+	cl, err := we.opts.NewCluster(we.config, clusterName, we.wildcardCache, we.opts.Scheme, recorder)
 	if err != nil {
 		return fmt.Errorf("failed to create cluster %q: %w", clusterName, err)
 	}
 
-	if err := we.provider.Clusters.Add(ctx, multicluster.ClusterName(clusterName.String()), cl, aware); err != nil {
+	if err := we.addCluster(ctx, multicluster.ClusterName(clusterName.String()), cl, aware); err != nil {
 		return fmt.Errorf("failed to add cluster %q: %w", clusterName, err)
 	}
 

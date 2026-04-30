@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
@@ -52,16 +53,16 @@ func testProvider(t *testing.T, extractURLs func(client.Object) ([]string, error
 			ExtractURLsFromEndpointSlice: extractURLs,
 			Log:                          &logger,
 		},
+		config:           &rest.Config{Host: "https://kcp.example.com"},
 		Clusters:         clusters.New[cluster.Cluster](),
 		watchedEndpoints: map[string]*watchedEndpoint{},
 		aggregateCache:   mcpcache.NewAggregateCache(),
 	}
 
-	p.watchEndpointFunc = func(ctx context.Context, url string, aware multicluster.Aware) (*watchedEndpoint, error) {
+	p.watchEndpointFunc = func(ctx context.Context, cfg *rest.Config, aware multicluster.Aware) (*watchedEndpoint, error) {
 		_, cancel := context.WithCancel(ctx)
 		return &watchedEndpoint{
-			cancel:   cancel,
-			provider: p,
+			cancel: cancel,
 		}, nil
 	}
 
@@ -124,10 +125,10 @@ func TestEndpointSliceUpdate_IdempotentAdd(t *testing.T) {
 	}
 
 	p := testProvider(t, extractURLs)
-	p.watchEndpointFunc = func(ctx context.Context, url string, aware multicluster.Aware) (*watchedEndpoint, error) {
+	p.watchEndpointFunc = func(ctx context.Context, cfg *rest.Config, aware multicluster.Aware) (*watchedEndpoint, error) {
 		callCount++
 		_, cancel := context.WithCancel(ctx)
-		return &watchedEndpoint{cancel: cancel, provider: p}, nil
+		return &watchedEndpoint{cancel: cancel}, nil
 	}
 
 	aware := &mockAware{}
