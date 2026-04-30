@@ -160,6 +160,9 @@ linters:
           - dupl
         path: _test\.go
       - linters:
+          - goconst
+        path: _test\.go
+      - linters:
           - revive
         path: .*/pkg/.*
       # Seems to incorrectly trigger on the two implementations that are only
