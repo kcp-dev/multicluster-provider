@@ -54,7 +54,8 @@ func New(cfg *rest.Config, endpointSliceName string, options provider.Options) (
 	store := paths.New()
 
 	h := &pathHandler{
-		pathStore: store,
+		pathStore:       store,
+		registeredPaths: make(map[string]struct{}),
 	}
 	options.Handlers = append(options.Handlers, h)
 
@@ -91,6 +92,8 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 
 type pathHandler struct {
 	pathStore *paths.Store
+	// registeredPaths tracks which paths have already been added to pathStore
+	registeredPaths map[string]struct{}
 }
 
 func (p *pathHandler) OnAdd(obj client.Object) {
@@ -102,10 +105,23 @@ func (p *pathHandler) OnAdd(obj client.Object) {
 	}
 
 	p.pathStore.Add(path, cluster)
+	p.registeredPaths[path] = struct{}{}
 }
 
 func (p *pathHandler) OnUpdate(oldObj, newObj client.Object) {
-	// Not used.
+	newPath := newObj.GetAnnotations()[kcpcore.LogicalClusterPathAnnotationKey]
+
+	if newPath == "" {
+		return
+	}
+
+	if _, exists := p.registeredPaths[newPath]; exists {
+		return
+	}
+
+	cluster := logicalcluster.From(newObj)
+	p.pathStore.Add(newPath, cluster)
+	p.registeredPaths[newPath] = struct{}{}
 }
 
 func (p *pathHandler) OnDelete(obj client.Object) {
@@ -115,4 +131,5 @@ func (p *pathHandler) OnDelete(obj client.Object) {
 	}
 
 	p.pathStore.Remove(path)
+	delete(p.registeredPaths, path)
 }
