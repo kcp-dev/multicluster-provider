@@ -174,6 +174,11 @@ func (i *scopedInformer) HasSynced() bool {
 	return i.informer.HasSynced()
 }
 
+// HasSyncedChecker completes if the informers underlying store has synced.
+func (i *scopedInformer) HasSyncedChecker() toolscache.DoneChecker {
+	return i.informer.HasSyncedChecker()
+}
+
 // IsStopped returns true if the informer has been stopped.
 func (i *scopedInformer) IsStopped() bool {
 	return i.informer.IsStopped()
