@@ -50,6 +50,9 @@ import (
 // every engaged cluster.
 type NewClusterFunc func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, recorderProvider mcrecorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error)
 
+// URLExtractor extracts virtual workspace URLs from an object.
+type URLExtractor func(obj client.Object) ([]string, error)
+
 // Options are the options for a provider.
 type Options struct {
 	// Scheme is the scheme to use for the provider.
@@ -63,7 +66,7 @@ type Options struct {
 
 	// ExtractURLsFromEndpointSlice is used to extract the URLs from the EndpointSliceObject.
 	// If this is nil it defaults to [DefaultExtractURLsFromEndpointSlice].
-	ExtractURLsFromEndpointSlice func(obj client.Object) ([]string, error)
+	ExtractURLsFromEndpointSlice URLExtractor
 
 	// ObjectToWatch is the object type the provider watches inside of
 	// the virtual workspaces to observe logical clusters joining and
