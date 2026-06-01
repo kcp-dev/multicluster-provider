@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kcp-dev/logicalcluster/v3"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,7 +39,6 @@ import (
 
 	kcpcache "github.com/kcp-dev/apimachinery/v2/pkg/cache"
 	kcpinformers "github.com/kcp-dev/apimachinery/v2/third_party/informers"
-	"github.com/kcp-dev/logicalcluster/v3"
 )
 
 // WildcardCache is a cache that operates on a '/clusters/*' endpoint.
@@ -202,7 +202,11 @@ func (c *wildcardCache) List(ctx context.Context, list client.ObjectList, opts .
 
 // IndexField adds an index for the given object kind.
 func (c *wildcardCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	gvk := obj.GetObjectKind().GroupVersionKind()
+	gvk, err := apiutil.GVKForObject(obj, c.scheme)
+	if err != nil {
+		return fmt.Errorf("failed to get GVK for object: %w", err)
+	}
+
 	c.indexTrackerLock.Lock()
 	key := fmt.Sprintf("%s|%s", gvk.String(), field)
 	if _, exists := c.indexTracker[key]; exists {
