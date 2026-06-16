@@ -6,10 +6,10 @@ replace github.com/kcp-dev/multicluster-provider/client => ./client
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/kcp-dev/apimachinery/v2 v2.31.2-0.20260505083940-abda469632ba
+	github.com/kcp-dev/apimachinery/v2 v2.32.0
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5
 	github.com/kcp-dev/multicluster-provider/client v0.0.0-00010101000000-000000000000
-	github.com/kcp-dev/sdk v0.31.0
+	github.com/kcp-dev/sdk v0.32.0
 	github.com/martinlindhe/base36 v1.1.1
 	github.com/onsi/ginkgo/v2 v2.27.4
 	github.com/onsi/gomega v1.39.0
@@ -24,7 +24,7 @@ require (
 	k8s.io/client-go v0.36.0
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
 	sigs.k8s.io/controller-runtime v0.24.1
-	sigs.k8s.io/multicluster-runtime v0.23.2-0.20260515094429-a3ed638f5a69
+	sigs.k8s.io/multicluster-runtime v0.24.1
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -66,7 +66,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
-	github.com/prometheus/procfs v0.19.2 // indirect
+	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect

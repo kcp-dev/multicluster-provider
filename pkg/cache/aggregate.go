@@ -23,7 +23,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/errors"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -94,5 +94,5 @@ func (a *AggregateCache) List(ctx context.Context, list client.ObjectList, opts 
 		errs = append(errs, fmt.Errorf("error setting aggregated items on passed object list: %w", err))
 	}
 
-	return errors.NewAggregate(errs)
+	return kerrors.NewAggregate(errs)
 }
