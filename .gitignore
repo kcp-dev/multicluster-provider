@@ -1,7 +1,7 @@
 /_build/
 /_tools/
 /vendor/
-/.kcp.e2e/
+/.kcp*
 /.e2e/
 .cover
 *.kubeconfig
