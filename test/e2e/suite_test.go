@@ -42,7 +42,7 @@ import (
 )
 
 var (
-	env       *envtest.Environment
+	env       *envtest.Sharded
 	kcpConfig *rest.Config
 )
 
@@ -58,12 +58,15 @@ func init() {
 func TestE2e(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	// Start a shared kcp instance.
-	var err error
-	env = &envtest.Environment{}
-	kcpConfig, err = env.Start()
-	require.NoError(t, err, "failed to start envtest environment")
-	defer env.Stop() //nolint:errcheck // we don't care about the error here.
+	env = &envtest.Sharded{}
+	require.NoError(t, env.Start(t.Context()), "failed to start sharded envtest environment")
+	t.Cleanup(func() {
+		if err := env.Stop(); err != nil {
+			t.Errorf("envtest stop: %v", err)
+		}
+	})
+
+	kcpConfig = env.Config()
 
 	RunSpecs(t, "Provider Suite")
 }
