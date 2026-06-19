@@ -258,6 +258,22 @@ func (s *Sharded) Config() *rest.Config {
 	return s.config
 }
 
+// ShardNames returns the names of the configured shards.
+func (s *Sharded) ShardNames() []string {
+	// Could also get this from the root workspace but that requires
+	// a context, error handling, ...
+	// And this is faster.
+	shardNames := make([]string, s.NumberOfShards)
+	for i := range s.NumberOfShards {
+		if i == 0 {
+			shardNames[0] = "root"
+		} else {
+			shardNames[i] = fmt.Sprintf("shard-%d", i)
+		}
+	}
+	return shardNames
+}
+
 func (s *Sharded) applyDefaults() error {
 	if s.NumberOfShards == 0 {
 		if v := os.Getenv(envNumberOfShards); v != "" {

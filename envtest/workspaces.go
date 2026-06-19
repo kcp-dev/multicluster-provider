@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/martinlindhe/base36"
@@ -63,6 +65,45 @@ func WithShard(name string) WorkspaceOption {
 			"name": name,
 		},
 	}})
+}
+
+// testWorkspaceCount tracks per-test workspace counters used by
+// WithSpreadAcrossShards to round-robin across shards.
+var testWorkspaceCount sync.Map
+
+// WithSpreadAcrossShards ensures that workspaces are spread across the
+// available shards unless the workspace has an explicit location set.
+// Taken from
+// https://github.com/kcp-dev/kcp/blob/32d5f90a15e1187d92cb535dd0d3f9529696ad26/staging/src/github.com/kcp-dev/sdk/testing/workspaces.go#L114-L145
+func WithSpreadAcrossShards(t TestingT, shardNames []string) WorkspaceOption {
+	require.NotEmpty(t, shardNames, "WithSpreadAcrossShards requires at least one shard to schedule workspaces on")
+
+	storedValue, loaded := testWorkspaceCount.LoadOrStore(t.Name(), &atomic.Uint64{})
+	// Cleanup the counter when the test finalizes
+	if !loaded {
+		t.Cleanup(func() {
+			testWorkspaceCount.Delete(t.Name())
+		})
+	}
+
+	counter := storedValue.(*atomic.Uint64)
+
+	return func(ws *tenancyv1alpha1.Workspace) {
+		if ws.Spec.Location != nil {
+			return
+		}
+
+		// Just `counter.Add(1)` would be enough but it feels better to
+		// place the first workspace on the first shard listed in
+		// shardNames. Not that it matters, but it feels like something
+		// someone might hit while debugging a test failure and lead
+		// people down the wrong path.
+		// Hence increase the atomic counter, subtract 1 from the
+		// result so the first workspace lands on the first shard.
+		idx := int(counter.Add(1) - 1) //nolint:gosec // Ignore integer overflow, it's unlikely that we'll hit math.MAX_INT for the amount of workspaces in one test
+		targetShard := shardNames[idx%len(shardNames)]
+		WithShard(targetShard)(ws)
+	}
 }
 
 // WithLocation sets the location of the workspace.
