@@ -19,7 +19,12 @@ set -euo pipefail
 cd $(dirname $0)/..
 source hack/lib.sh
 
-export TEST_ASSET_KCP="$(UGET_PRINT_PATH=absolute make --no-print-directory install-kcp)"
-export CGO_ENABLED=1
+export KCP_ASSET_SHARDED_TEST_SERVER="$(UGET_PRINT_PATH=absolute make --no-print-directory install-sharded-test-server)"
+export KCP_ASSET_KCP="$(UGET_PRINT_PATH=absolute make --no-print-directory install-kcp)"
+export KCP_ASSET_KCP_FRONT_PROXY="$(UGET_PRINT_PATH=absolute make --no-print-directory install-kcp-front-proxy)"
+export KCP_ASSET_CACHE_SERVER="$(UGET_PRINT_PATH=absolute make --no-print-directory install-cache-server)"
+export CGO_ENABLED=0
+export NO_GORUN=1
+export KCP_TEST_WORK_DIR="$PWD"
 
-go_test unit_tests -short -tags "unit" -timeout 20m -race -v ./...
+go_test e2e -timeout 30m -v ./test/e2e/...

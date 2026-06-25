@@ -57,7 +57,6 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// TODO: Once envtest supports multiple shards, spread consumer workspaces across shards to verify true cross-shard aggregation.
 var _ = Describe("AggregateCache", Ordered, func() {
 	var (
 		ctx    context.Context
@@ -68,7 +67,7 @@ var _ = Describe("AggregateCache", Ordered, func() {
 		consumer1WS, consumer2WS     *tenancyv1alpha1.Workspace
 		consumer1Path, consumer2Path logicalcluster.Path
 		mgr                          mcmanager.Manager
-		vwEndpoint                   string
+		vwEndpoints                  []string
 	)
 
 	BeforeAll(func() {
@@ -77,6 +76,8 @@ var _ = Describe("AggregateCache", Ordered, func() {
 		var err error
 		cli, err = clusterclient.New(kcpConfig, client.Options{})
 		Expect(err).NotTo(HaveOccurred())
+
+		spreadOpt := envtest.WithSpreadAcrossShards(GinkgoT(), env.ShardNames())
 
 		_, providerPath = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("ac-provider"))
 
@@ -121,10 +122,9 @@ var _ = Describe("AggregateCache", Ordered, func() {
 		err = cli.Cluster(providerPath).Create(ctx, export)
 		Expect(err).NotTo(HaveOccurred())
 
-		// TODO: multi-shard: spread across shards
 		By("creating consumer workspaces")
-		consumer1WS, consumer1Path = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("ac-consumer1"))
-		consumer2WS, consumer2Path = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("ac-consumer2"))
+		consumer1WS, consumer1Path = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("ac-consumer1"), spreadOpt)
+		consumer2WS, consumer2Path = envtest.NewWorkspaceFixture(GinkgoT(), cli, core.RootCluster.Path(), envtest.WithNamePrefix("ac-consumer2"), spreadOpt)
 
 		By(fmt.Sprintf("creating an APIBinding in consumer1 workspace %q", consumer1Path))
 		binding := &apisv1alpha2.APIBinding{
@@ -170,18 +170,29 @@ var _ = Describe("AggregateCache", Ordered, func() {
 			return true, ""
 		}, wait.ForeverTestTimeout, time.Millisecond*500, "failed to create APIBinding in consumer2 workspace")
 
-		By("waiting for the APIExportEndpointSlice to have endpoints")
+		By("determining the shards hosting the consumer workspaces")
+		shard1 := envtest.WorkspaceShardOrDie(GinkgoT(), cli, consumer1WS)
+		shard2 := envtest.WorkspaceShardOrDie(GinkgoT(), cli, consumer2WS)
+		expectedShards := sets.NewString(shard1.Name, shard2.Name)
+		Expect(expectedShards).To(HaveLen(2))
+
+		By("waiting for the APIExportEndpointSlice to have one endpoint per consumer shard")
 		endpoints := &apisv1alpha1.APIExportEndpointSlice{}
 		envtest.Eventually(GinkgoT(), func() (bool, string) {
 			err := cli.Cluster(providerPath).Get(ctx, client.ObjectKey{Name: "example.com"}, endpoints)
 			if err != nil {
 				return false, fmt.Sprintf("failed to get APIExportEndpointSlice in %q: %v", providerPath, err)
 			}
-			// TODO: multi-shard: expect one endpoint per shard
-			return len(endpoints.Status.APIExportEndpoints) >= 1, fmt.Sprintf(
-				"expected at least 1 endpoint, got %d:\n%s", len(endpoints.Status.APIExportEndpoints), toYAML(GinkgoT(), endpoints))
+			if len(endpoints.Status.APIExportEndpoints) != expectedShards.Len() {
+				return false, fmt.Sprintf("expected %d endpoints (one per consumer shard %v), got %d:\n%s",
+					expectedShards.Len(), expectedShards.List(), len(endpoints.Status.APIExportEndpoints), toYAML(GinkgoT(), endpoints))
+			}
+			return true, ""
 		}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to see endpoints in APIExportEndpointSlice")
-		vwEndpoint = endpoints.Status.APIExportEndpoints[0].URL
+		vwEndpoints = make([]string, len(endpoints.Status.APIExportEndpoints))
+		for i, ep := range endpoints.Status.APIExportEndpoints {
+			vwEndpoints[i] = ep.URL
+		}
 
 		By(fmt.Sprintf("waiting for APIBinding in consumer1 %q to be ready", consumer1Path))
 		envtest.Eventually(GinkgoT(), func() (bool, string) {
@@ -266,43 +277,50 @@ var _ = Describe("AggregateCache", Ordered, func() {
 				}))
 			Expect(err).NotTo(HaveOccurred())
 
-			By("creating an AggregateCache backed by the virtual workspace wildcard cache")
+			By("creating an AggregateCache backed by one wildcard cache per APIExport endpoint")
 			aggregateCache = mcpcache.NewAggregateCache()
-			vwConfig := rest.CopyConfig(kcpConfig)
-			vwConfig.Host = vwEndpoint
-			wc, err := mcpcache.NewWildcardCache(vwConfig, cache.Options{
-				Scheme: scheme.Scheme,
-			})
-			Expect(err).NotTo(HaveOccurred())
-
 			widgetForIndex := &unstructured.Unstructured{}
 			widgetForIndex.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
-			err = wc.IndexField(ctx, widgetForIndex, "color", func(obj client.Object) []string {
-				u := obj.(*unstructured.Unstructured)
-				return []string{u.GetLabels()["color"]}
-			})
-			Expect(err).NotTo(HaveOccurred())
 
-			// TODO: multi-shard: Add one wildcard cache per shard
-			aggregateCache.AddCache("shard-root", wc)
+			wcs := make([]mcpcache.WildcardCache, 0, len(vwEndpoints))
+			for i, url := range vwEndpoints {
+				vwConfig := rest.CopyConfig(kcpConfig)
+				vwConfig.Host = url
+				wc, err := mcpcache.NewWildcardCache(vwConfig, cache.Options{
+					Scheme: scheme.Scheme,
+				})
+				Expect(err).NotTo(HaveOccurred())
 
-			By("starting the manager and wildcard cache")
+				err = wc.IndexField(ctx, widgetForIndex, "color", func(obj client.Object) []string {
+					u := obj.(*unstructured.Unstructured)
+					return []string{u.GetLabels()["color"]}
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				aggregateCache.AddCache(fmt.Sprintf("endpoint-%d", i), wc)
+				wcs = append(wcs, wc)
+			}
+
+			By("starting the manager and wildcard caches")
 			var groupContext context.Context
 			groupContext, cancelGroup = context.WithCancel(ctx)
 			g, groupContext = errgroup.WithContext(groupContext)
 			g.Go(func() error {
 				return mgr.Start(groupContext)
 			})
-			g.Go(func() error {
-				return wc.Start(groupContext)
-			})
+			for _, wc := range wcs {
+				g.Go(func() error {
+					return wc.Start(groupContext)
+				})
+			}
 
 			By("waiting for wildcard cache sync")
-			Expect(wc.WaitForCacheSync(groupContext)).To(BeTrue())
+			for _, wc := range wcs {
+				Expect(wc.WaitForCacheSync(groupContext)).To(BeTrue())
+			}
 		})
 
 		It("sees consumer clusters", func() {
-			// TODO: multi-shard: assert that the clusters are from different shardS
 			envtest.Eventually(GinkgoT(), func() (bool, string) {
 				lock.RLock()
 				defer lock.RUnlock()

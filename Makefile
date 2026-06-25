@@ -37,7 +37,7 @@ clean-tools:
 
 BOILERPLATE_VERSION ?= 0.3.0
 GOLANGCI_LINT_VERSION ?= 2.10.1
-KCP_VERSION ?= 0.30.0
+KCP_VERSION ?= 0.32.0
 WWHRD_VERSION ?= 06b99400ca6db678386ba5dc39bbbdcdadb664ff
 YQ_VERSION ?= 4.44.6
 
@@ -60,12 +60,24 @@ install-wwhrd:
 install-kcp:
 	@hack/uget.sh https://github.com/kcp-dev/kcp/releases/download/v{VERSION}/kcp_{VERSION}_{GOOS}_{GOARCH}.tar.gz kcp $(KCP_VERSION)
 
+.PHONY: install-sharded-test-server
+install-sharded-test-server:
+	@hack/uget.sh https://github.com/kcp-dev/kcp/releases/download/v{VERSION}/sharded-test-server_{VERSION}_{GOOS}_{GOARCH}.tar.gz sharded-test-server $(KCP_VERSION)
+
+.PHONY: install-kcp-front-proxy
+install-kcp-front-proxy:
+	@hack/uget.sh https://github.com/kcp-dev/kcp/releases/download/v{VERSION}/kcp-front-proxy_{VERSION}_{GOOS}_{GOARCH}.tar.gz kcp-front-proxy $(KCP_VERSION)
+
+.PHONY: install-cache-server
+install-cache-server:
+	@hack/uget.sh https://github.com/kcp-dev/kcp/releases/download/v{VERSION}/cache-server_{VERSION}_{GOOS}_{GOARCH}.tar.gz cache-server $(KCP_VERSION)
+
 # This target can be used to conveniently update the checksums for all checksummed tools.
 # Combine with GOARCH to update for other archs, like "GOARCH=arm64 make update-tools".
 
 .PHONY: update-tools
 update-tools: UGET_UPDATE=true
-update-tools: clean-tools install-boilerplate install-golangci-lint install-kcp
+update-tools: clean-tools install-boilerplate install-golangci-lint install-kcp install-sharded-test-server install-kcp-front-proxy install-cache-server
 
 GOLANGCI_LINT = $(ROOT_DIR)/$(UGET_DIRECTORY)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 

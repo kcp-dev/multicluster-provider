@@ -187,8 +187,13 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 				},
 			},
 		}
-		err = cli.Cluster(other).Create(ctx, binding)
-		Expect(err).NotTo(HaveOccurred())
+		envtest.Eventually(GinkgoT(), func() (bool, string) {
+			err = cli.Cluster(other).Create(ctx, binding)
+			if err != nil {
+				return false, fmt.Sprintf("failed to create APIBinding in %q: %v", other, err)
+			}
+			return true, ""
+		}, wait.ForeverTestTimeout, time.Millisecond*500, "failed to create APIBinding in the other workspace")
 
 		By(fmt.Sprintf("creating an APIBinding in the consumer workspace %q", consumer))
 		binding = &apisv1alpha2.APIBinding{
@@ -236,8 +241,13 @@ var _ = Describe("APIExport Provider", Ordered, func() {
 				},
 			},
 		}
-		err = cli.Cluster(consumer).Create(ctx, binding)
-		Expect(err).NotTo(HaveOccurred())
+		envtest.Eventually(GinkgoT(), func() (bool, string) {
+			err = cli.Cluster(consumer).Create(ctx, binding)
+			if err != nil {
+				return false, fmt.Sprintf("failed to create APIBinding in %q: %v", consumer, err)
+			}
+			return true, ""
+		}, wait.ForeverTestTimeout, time.Millisecond*500, "failed to create APIBinding in the consumer workspace")
 
 		By(fmt.Sprintf("waiting until the APIExportEndpointSlice in the provider workspace %q to have endpoints", provider))
 		endpoints := &apisv1alpha1.APIExportEndpointSlice{}
