@@ -19,12 +19,12 @@ package cache
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -37,27 +37,64 @@ type Lister interface {
 type AggregateCache struct {
 	lock   sync.RWMutex
 	caches map[string]WildcardCache
+
+	// Track aggregate informers for dynamic shard updates
+	informersLock sync.RWMutex
+	informers     map[reflect.Type]*aggregateSharedIndexInformer
 }
 
 // NewAggregateCache returns an initialized AggregateCache.
 func NewAggregateCache() *AggregateCache {
 	return &AggregateCache{
-		caches: make(map[string]WildcardCache),
+		caches:    make(map[string]WildcardCache),
+		informers: make(map[reflect.Type]*aggregateSharedIndexInformer),
 	}
 }
 
 // AddCache registers a WildcardCache under the given id.
 func (a *AggregateCache) AddCache(id string, c WildcardCache) {
 	a.lock.Lock()
-	defer a.lock.Unlock()
 	a.caches[id] = c
+	a.lock.Unlock()
+
+	// Notify all aggregate informers to register their handlers with the new shard
+	a.informersLock.RLock()
+	for _, inf := range a.informers {
+		inf.onCacheAdded(id, c)
+	}
+	a.informersLock.RUnlock()
 }
 
 // RemoveCache unregisters the WildcardCache with the given id.
 func (a *AggregateCache) RemoveCache(id string) {
 	a.lock.Lock()
-	defer a.lock.Unlock()
 	delete(a.caches, id)
+	a.lock.Unlock()
+
+	// Notify all aggregate informers to clean up registrations for this shard
+	a.informersLock.RLock()
+	for _, inf := range a.informers {
+		inf.onCacheRemoved(id)
+	}
+	a.informersLock.RUnlock()
+}
+
+// GetAggregateInformer returns an AggregateSharedIndexInformer for the given object type.
+// The returned informer aggregates events from all current and future shards.
+// Calling this method multiple times with the same object type returns the same informer instance.
+func (a *AggregateCache) GetAggregateInformer(obj runtime.Object) AggregateSharedIndexInformer {
+	objType := reflect.TypeOf(obj)
+
+	a.informersLock.Lock()
+	defer a.informersLock.Unlock()
+
+	if inf, ok := a.informers[objType]; ok {
+		return inf
+	}
+
+	inf := newAggregateSharedIndexInformer(a, obj)
+	a.informers[objType] = inf
+	return inf
 }
 
 // List aggregates results from all registered caches.
@@ -96,21 +133,4 @@ func (a *AggregateCache) List(ctx context.Context, list client.ObjectList, opts 
 	}
 
 	return kerrors.NewAggregate(errs)
-}
-
-// GetSharedInformers returns SharedIndexInformers for all registered shard caches.
-// Users can use these informers to register event handlers across all shards.
-func (a *AggregateCache) GetSharedInformers(obj runtime.Object) ([]toolscache.SharedIndexInformer, error) {
-	a.lock.RLock()
-	defer a.lock.RUnlock()
-
-	result := make([]toolscache.SharedIndexInformer, 0, len(a.caches))
-	for id, c := range a.caches {
-		inf, _, _, err := c.GetSharedInformer(obj)
-		if err != nil {
-			return nil, fmt.Errorf("shard %q: %w", id, err)
-		}
-		result = append(result, inf)
-	}
-	return result, nil
 }

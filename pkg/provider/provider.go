@@ -207,9 +207,12 @@ func (p *Provider) Lister() mcpcache.Lister {
 	return p.aggregateCache
 }
 
-// GetSharedInformers returns SharedIndexInformers for all registered shard caches.
-func (p *Provider) GetSharedInformers(obj runtime.Object) ([]toolscache.SharedIndexInformer, error) {
-	return p.aggregateCache.GetSharedInformers(obj)
+// GetAggregateInformer returns an AggregateSharedIndexInformer for the given object type.
+// The returned informer aggregates events from all current and future shards.
+// Event handlers registered with this informer will receive events from all shards,
+// and will automatically be registered with new shards as they are added.
+func (p *Provider) GetAggregateInformer(obj runtime.Object) mcpcache.AggregateSharedIndexInformer {
+	return p.aggregateCache.GetAggregateInformer(obj)
 }
 
 // IndexField adds an indexer to the clusters managed by this provider.
