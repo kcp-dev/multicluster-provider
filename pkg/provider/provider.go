@@ -207,6 +207,11 @@ func (p *Provider) Lister() mcpcache.Lister {
 	return p.aggregateCache
 }
 
+// GetSharedInformers returns SharedIndexInformers for all registered shard caches.
+func (p *Provider) GetSharedInformers(obj runtime.Object) ([]toolscache.SharedIndexInformer, error) {
+	return p.aggregateCache.GetSharedInformers(obj)
+}
+
 // IndexField adds an indexer to the clusters managed by this provider.
 func (p *Provider) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
 	return p.Clusters.IndexField(ctx, obj, field, extractValue)

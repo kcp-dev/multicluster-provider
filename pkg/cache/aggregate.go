@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -95,4 +96,21 @@ func (a *AggregateCache) List(ctx context.Context, list client.ObjectList, opts 
 	}
 
 	return kerrors.NewAggregate(errs)
+}
+
+// GetSharedInformers returns SharedIndexInformers for all registered shard caches.
+// Users can use these informers to register event handlers across all shards.
+func (a *AggregateCache) GetSharedInformers(obj runtime.Object) ([]toolscache.SharedIndexInformer, error) {
+	a.lock.RLock()
+	defer a.lock.RUnlock()
+
+	result := make([]toolscache.SharedIndexInformer, 0, len(a.caches))
+	for id, c := range a.caches {
+		inf, _, _, err := c.GetSharedInformer(obj)
+		if err != nil {
+			return nil, fmt.Errorf("shard %q: %w", id, err)
+		}
+		result = append(result, inf)
+	}
+	return result, nil
 }
