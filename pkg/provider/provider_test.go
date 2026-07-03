@@ -56,7 +56,7 @@ func testProvider(t *testing.T, extractURLs func(client.Object) ([]string, error
 		config:           &rest.Config{Host: "https://kcp.example.com"},
 		Clusters:         clusters.New[cluster.Cluster](),
 		watchedEndpoints: map[string]*watchedEndpoint{},
-		aggregateCache:   mcpcache.NewAggregateCache(),
+		aggregateCache:   mcpcache.NewAggregateCache(scheme.Scheme),
 	}
 
 	p.watchEndpointFunc = func(ctx context.Context, cfg *rest.Config, aware multicluster.Aware) (*watchedEndpoint, error) {

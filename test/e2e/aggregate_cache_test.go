@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -278,7 +279,7 @@ var _ = Describe("AggregateCache", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating an AggregateCache backed by one wildcard cache per APIExport endpoint")
-			aggregateCache = mcpcache.NewAggregateCache()
+			aggregateCache = mcpcache.NewAggregateCache(scheme.Scheme)
 			widgetForIndex := &unstructured.Unstructured{}
 			widgetForIndex.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
 
@@ -421,6 +422,57 @@ var _ = Describe("AggregateCache", Ordered, func() {
 				}
 				return l.Items[0].GetName() == "blue-widget", fmt.Sprintf("expected blue-widget, got %s", l.Items[0].GetName())
 			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to list blue widgets via aggregate cache with field index")
+		})
+
+		It("can receive events via aggregate informer from all shards", func() {
+			By("getting an aggregate informer for widgets")
+			widgetGVK := runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+			widgetForInformer := &unstructured.Unstructured{}
+			widgetForInformer.SetGroupVersionKind(widgetGVK)
+
+			aggInf, err := aggregateCache.GetAggregateInformer(widgetForInformer)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("registering an event handler")
+			var addedWidgets sync.Map // map[string]bool for thread-safe access
+			_, err = aggInf.AddEventHandler(&toolscache.ResourceEventHandlerFuncs{
+				AddFunc: func(obj any) {
+					u := obj.(*unstructured.Unstructured)
+					addedWidgets.Store(u.GetName(), true)
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("waiting for the handler to receive existing widgets from all shards")
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				_, hasRed := addedWidgets.Load("red-widget")
+				_, hasBlue := addedWidgets.Load("blue-widget")
+				if hasRed && hasBlue {
+					return true, ""
+				}
+				var names []string
+				addedWidgets.Range(func(key, _ any) bool {
+					names = append(names, key.(string))
+					return true
+				})
+				return false, fmt.Sprintf("expected red-widget and blue-widget, got %v", names)
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to receive add events for existing widgets")
+
+			By("creating a new widget in consumer1 and verifying the handler receives it")
+			greenWidget := &unstructured.Unstructured{}
+			greenWidget.SetGroupVersionKind(widgetGVK)
+			greenWidget.SetName("green-widget")
+			greenWidget.SetLabels(map[string]string{"color": "green"})
+			err = cli.Cluster(consumer1Path).Create(ctx, greenWidget)
+			Expect(err).NotTo(HaveOccurred())
+
+			envtest.Eventually(GinkgoT(), func() (bool, string) {
+				_, hasGreen := addedWidgets.Load("green-widget")
+				if hasGreen {
+					return true, ""
+				}
+				return false, "green-widget not yet received"
+			}, wait.ForeverTestTimeout, time.Millisecond*100, "failed to receive add event for new widget")
 		})
 
 		AfterAll(func() {

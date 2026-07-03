@@ -23,8 +23,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
 // Lister can list objects across all registered shard caches.
@@ -34,29 +36,72 @@ type Lister interface {
 
 // AggregateCache provides an aggregated view across multiple per-shard WildcardCaches.
 type AggregateCache struct {
+	scheme *runtime.Scheme
+
 	lock   sync.RWMutex
 	caches map[string]WildcardCache
+
+	// Track aggregate informers for dynamic shard updates
+	informersLock sync.RWMutex
+	informers     map[schema.GroupVersionKind]*aggregateSharedIndexInformer
 }
 
 // NewAggregateCache returns an initialized AggregateCache.
-func NewAggregateCache() *AggregateCache {
+func NewAggregateCache(scheme *runtime.Scheme) *AggregateCache {
 	return &AggregateCache{
-		caches: make(map[string]WildcardCache),
+		scheme:    scheme,
+		caches:    make(map[string]WildcardCache),
+		informers: make(map[schema.GroupVersionKind]*aggregateSharedIndexInformer),
 	}
 }
 
 // AddCache registers a WildcardCache under the given id.
 func (a *AggregateCache) AddCache(id string, c WildcardCache) {
 	a.lock.Lock()
-	defer a.lock.Unlock()
 	a.caches[id] = c
+	a.lock.Unlock()
+
+	// Notify all aggregate informers to register their handlers with the new shard
+	a.informersLock.RLock()
+	for _, inf := range a.informers {
+		inf.onCacheAdded(id, c)
+	}
+	a.informersLock.RUnlock()
 }
 
 // RemoveCache unregisters the WildcardCache with the given id.
 func (a *AggregateCache) RemoveCache(id string) {
 	a.lock.Lock()
-	defer a.lock.Unlock()
 	delete(a.caches, id)
+	a.lock.Unlock()
+
+	// Notify all aggregate informers to clean up registrations for this shard
+	a.informersLock.RLock()
+	for _, inf := range a.informers {
+		inf.onCacheRemoved(id)
+	}
+	a.informersLock.RUnlock()
+}
+
+// GetAggregateInformer returns an AggregateSharedIndexInformer for the given object type.
+// The returned informer aggregates events from all current and future shards.
+// Calling this method multiple times with the same object type returns the same informer instance.
+func (a *AggregateCache) GetAggregateInformer(obj runtime.Object) (AggregateSharedIndexInformer, error) {
+	gvk, err := apiutil.GVKForObject(obj, a.scheme)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get GVK for object: %w", err)
+	}
+
+	a.informersLock.Lock()
+	defer a.informersLock.Unlock()
+
+	if inf, ok := a.informers[gvk]; ok {
+		return inf, nil
+	}
+
+	inf := newAggregateSharedIndexInformer(a, obj)
+	a.informers[gvk] = inf
+	return inf, nil
 }
 
 // List aggregates results from all registered caches.
