@@ -278,7 +278,7 @@ var _ = Describe("AggregateCache", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating an AggregateCache backed by one wildcard cache per APIExport endpoint")
-			aggregateCache = mcpcache.NewAggregateCache()
+			aggregateCache = mcpcache.NewAggregateCache(scheme.Scheme)
 			widgetForIndex := &unstructured.Unstructured{}
 			widgetForIndex.SetGroupVersionKind(runtimeschema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
 

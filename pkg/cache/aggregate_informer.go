@@ -73,6 +73,9 @@ func (a *aggregateSharedIndexInformer) AddEventHandler(handler toolscache.Resour
 
 // AddEventHandlerWithResyncPeriod registers a handler with a resync period.
 func (a *aggregateSharedIndexInformer) AddEventHandlerWithResyncPeriod(handler toolscache.ResourceEventHandler, resyncPeriod time.Duration) (toolscache.ResourceEventHandlerRegistration, error) {
+	a.cache.lock.RLock()
+	defer a.cache.lock.RUnlock()
+
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -83,23 +86,19 @@ func (a *aggregateSharedIndexInformer) AddEventHandlerWithResyncPeriod(handler t
 	}
 
 	// Register with all current caches
-	a.cache.lock.RLock()
 	for cacheID, c := range a.cache.caches {
 		inf, _, _, err := c.GetSharedInformer(a.obj)
 		if err != nil {
-			a.cache.lock.RUnlock()
 			a.cleanupRegistrations(handlerEntry)
 			return nil, fmt.Errorf("cache %q: failed to get informer: %w", cacheID, err)
 		}
 		reg, err := inf.AddEventHandlerWithResyncPeriod(handler, resyncPeriod)
 		if err != nil {
-			a.cache.lock.RUnlock()
 			a.cleanupRegistrations(handlerEntry)
 			return nil, fmt.Errorf("cache %q: failed to add handler: %w", cacheID, err)
 		}
 		handlerEntry.registrations[cacheID] = reg
 	}
-	a.cache.lock.RUnlock()
 
 	// Track handler so we can register it with future caches
 	a.handlers = append(a.handlers, handlerEntry)
@@ -112,9 +111,6 @@ func (a *aggregateSharedIndexInformer) AddEventHandlerWithResyncPeriod(handler t
 
 // cleanupRegistrations removes all registrations for an entry.
 func (a *aggregateSharedIndexInformer) cleanupRegistrations(entry *handlerEntry) {
-	a.cache.lock.RLock()
-	defer a.cache.lock.RUnlock()
-
 	for id, reg := range entry.registrations {
 		if c, ok := a.cache.caches[id]; ok {
 			if inf, _, _, err := c.GetSharedInformer(a.obj); err == nil {

@@ -192,7 +192,7 @@ func NewProvider(cfg *rest.Config, endpointSliceName string, opts Options) (*Pro
 			stopRecorderProvider: p.recorderManager.StopProvider,
 		})
 	}
-	p.aggregateCache = mcpcache.NewAggregateCache()
+	p.aggregateCache = mcpcache.NewAggregateCache(p.opts.Scheme)
 
 	return p, nil
 }
@@ -211,7 +211,7 @@ func (p *Provider) Lister() mcpcache.Lister {
 // The returned informer aggregates events from all current and future shards.
 // Event handlers registered with this informer will receive events from all shards,
 // and will automatically be registered with new shards as they are added.
-func (p *Provider) GetAggregateInformer(obj runtime.Object) mcpcache.AggregateSharedIndexInformer {
+func (p *Provider) GetAggregateInformer(obj runtime.Object) (mcpcache.AggregateSharedIndexInformer, error) {
 	return p.aggregateCache.GetAggregateInformer(obj)
 }
 
