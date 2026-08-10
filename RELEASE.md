@@ -35,11 +35,23 @@ Patch releases are tagged from the corresponding release branch. New features ta
    git push upstream release-0.6
    ```
 
-2. Tag both modules (signed):
+2. Tag both modules (signed), first update client as multicluster-provider depends on it:
+   ```sh
+   git tag -s client/v0.6.0 -m "client/v0.6.0"
+   git push upstream client/v0.6.0
+   ```
+
+   Update the deps:
+   ```sh
+   go mod edit -require=github.com/kcp-dev/multicluster-provider/client@v0.6.0
+   go mod tidy
+   git add go.mod go.sum
+   ```
+
+   And finally tag the main module:
    ```sh
    git tag -s v0.6.0 -m "v0.6.0"
-   git tag -s client/v0.6.0 -m "client/v0.6.0"
-   git push upstream v0.6.0 client/v0.6.0
+   git push upstream v0.6.0
    ```
 
 3. The GoReleaser workflow builds binaries for Linux and macOS (amd64/arm64) and creates a **draft** GitHub release.
