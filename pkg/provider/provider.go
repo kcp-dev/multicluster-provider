@@ -18,17 +18,20 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/go-logr/logr"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -148,6 +151,11 @@ type Provider struct {
 	// slice are already being watched.
 	watchedEndpoints map[string]*watchedEndpoint
 
+	// queue carries endpointslice keys from the informer to the worker in
+	// Start. Failures to start endpoint watchers are retried with backoff
+	// by re-enqueueing the key.
+	queue workqueue.TypedRateLimitingInterface[string]
+
 	// watchEndpointFunc starts watching an endpoint.
 	// Defaults to newWatchedEndpoint; override for testing.
 	watchEndpointFunc func(ctx context.Context, cfg *rest.Config, aware multicluster.Aware) (*watchedEndpoint, error)
@@ -182,6 +190,7 @@ func NewProvider(cfg *rest.Config, endpointSliceName string, opts Options) (*Pro
 
 	p.recorderManager = mcrecorder.NewManager(p.opts.Scheme, p.opts.Log.WithName("recorder-manager"))
 	p.watchedEndpoints = map[string]*watchedEndpoint{}
+	p.queue = workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
 	p.watchEndpointFunc = func(ctx context.Context, cfg *rest.Config, aware multicluster.Aware) (*watchedEndpoint, error) {
 		return newWatchedEndpoint(ctx, cfg, aware, &watchedEndpoint{
 			opts:                 p.opts,
@@ -235,20 +244,34 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 		return err
 	}
 
+	// Endpoint watchers can fail to start transiently, e.g. when the virtual
+	// workspace URL is published before the virtual apiserver serves discovery
+	// for it. Events funnel through the rate-limited queue so failures are
+	// retried with backoff instead of waiting for another endpointslice event
+	// that may never come.
+	defer p.queue.ShutDown()
+
+	enqueue := func(obj any) {
+		key, err := toolscache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+		if err != nil {
+			p.opts.Log.Error(err, "failed to get key for endpointslice object", "object", obj)
+			return
+		}
+		p.queue.Add(key)
+	}
+
 	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			t := obj.(client.Object)
-			p.opts.Log.Info("new endpointslice object", "object", t)
-			p.endpointSliceUpdate(ctx, aware, t)
+			p.opts.Log.Info("new endpointslice object", "object", obj)
+			enqueue(obj)
 		},
 		UpdateFunc: func(oldObj any, newObj any) {
-			t := newObj.(client.Object)
-			p.opts.Log.Info("updated endpointslice object", "object", t)
-			p.endpointSliceUpdate(ctx, aware, t)
+			p.opts.Log.Info("updated endpointslice object", "object", newObj)
+			enqueue(newObj)
 		},
 		DeleteFunc: func(obj any) {
 			p.opts.Log.Info("deleted endpointslice object", "object", obj)
-			p.stopAllWatchedEndpoints()
+			enqueue(obj)
 		},
 	})
 	if err != nil {
@@ -260,17 +283,66 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 		}
 	}()
 
+	go func() {
+		<-ctx.Done()
+		p.queue.ShutDown()
+	}()
+
+	go func() {
+		for p.processNextEndpointSlice(ctx, aware) {
+		}
+	}()
+
 	p.opts.Log.Info("starting provider")
 	return p.cache.Start(ctx)
 }
 
-func (p *Provider) endpointSliceUpdate(ctx context.Context, aware multicluster.Aware, obj client.Object) {
-	urls, err := p.opts.ExtractURLsFromEndpointSlice(obj)
+// processNextEndpointSlice handles a single item from the endpointslice queue.
+// All watchedEndpoints mutations happen here, on a single goroutine.
+func (p *Provider) processNextEndpointSlice(ctx context.Context, aware multicluster.Aware) bool {
+	key, shutdown := p.queue.Get()
+	if shutdown {
+		return false
+	}
+	defer p.queue.Done(key)
+
+	namespace, name, err := toolscache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		p.opts.Log.Error(err, "error getting virtual workspace URLs from endpointslice object", "obj", obj, "name", obj.GetName())
-		return
+		p.opts.Log.Error(err, "invalid endpointslice key", "key", key)
+		p.queue.Forget(key)
+		return true
 	}
 
+	obj := p.opts.EndpointSliceObject.DeepCopyObject().(client.Object)
+	switch err := p.cache.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, obj); {
+	case apierrors.IsNotFound(err):
+		p.stopAllWatchedEndpoints()
+	case err != nil:
+		p.opts.Log.Error(err, "failed to get endpointslice object, retrying", "key", key)
+		p.queue.AddRateLimited(key)
+		return true
+	default:
+		if err := p.endpointSliceUpdate(ctx, aware, obj); err != nil {
+			p.opts.Log.Error(err, "failed to watch endpoints, retrying", "key", key)
+			p.queue.AddRateLimited(key)
+			return true
+		}
+	}
+
+	p.queue.Forget(key)
+	return true
+}
+
+// endpointSliceUpdate reconciles the set of watched endpoints against the
+// URLs in the endpoint slice. It returns an error if any endpoint could not
+// be watched, so the caller can retry; endpoints that did start are kept.
+func (p *Provider) endpointSliceUpdate(ctx context.Context, aware multicluster.Aware, obj client.Object) error {
+	urls, err := p.opts.ExtractURLsFromEndpointSlice(obj)
+	if err != nil {
+		return fmt.Errorf("error getting virtual workspace URLs from endpointslice object %q: %w", obj.GetName(), err)
+	}
+
+	var errs []error
 	for _, url := range urls {
 		if _, ok := p.watchedEndpoints[url]; ok {
 			// endpoint is already handled
@@ -282,7 +354,7 @@ func (p *Provider) endpointSliceUpdate(ctx context.Context, aware multicluster.A
 
 		we, err := p.watchEndpointFunc(ctx, cfg, aware)
 		if err != nil {
-			p.opts.Log.Error(err, "failed to watch endpoint", "url", url)
+			errs = append(errs, fmt.Errorf("failed to watch endpoint %q: %w", url, err))
 			continue
 		}
 		p.watchedEndpoints[url] = we
@@ -299,6 +371,8 @@ func (p *Provider) endpointSliceUpdate(ctx context.Context, aware multicluster.A
 		p.aggregateCache.RemoveCache(watchedURL)
 		delete(p.watchedEndpoints, watchedURL)
 	}
+
+	return errors.Join(errs...)
 }
 
 func (p *Provider) stopAllWatchedEndpoints() {
