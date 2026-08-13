@@ -262,15 +262,15 @@ func (p *Provider) Start(ctx context.Context, aware multicluster.Aware) error {
 
 	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			p.opts.Log.Info("new endpointslice object", "object", obj)
+			p.opts.Log.V(4).Info("new endpointslice object", "object", logObject(obj.(client.Object)))
 			enqueue(obj)
 		},
 		UpdateFunc: func(oldObj any, newObj any) {
-			p.opts.Log.Info("updated endpointslice object", "object", newObj)
+			p.opts.Log.V(4).Info("updated endpointslice object", "object", logObject(newObj.(client.Object)))
 			enqueue(newObj)
 		},
 		DeleteFunc: func(obj any) {
-			p.opts.Log.Info("deleted endpointslice object", "object", obj)
+			p.opts.Log.V(4).Info("deleted endpointslice object", "object", logObject(obj.(client.Object)))
 			enqueue(obj)
 		},
 	})
@@ -421,6 +421,23 @@ func newWatchedEndpoint(ctx context.Context, cfg *rest.Config, aware multicluste
 	return we, nil
 }
 
+func logObject(obj client.Object) map[string]string {
+	data := map[string]string{
+		"name":      obj.GetName(),
+		"namespace": obj.GetNamespace(),
+	}
+
+	if cluster := obj.GetAnnotations()["kcp.io/cluster"]; cluster != "" {
+		data["cluster"] = cluster
+	}
+
+	if workspace := obj.GetAnnotations()["kcp.io/path"]; workspace != "" {
+		data["workspace"] = workspace
+	}
+
+	return data
+}
+
 func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) error {
 	informer, err := we.wildcardCache.GetInformer(ctx, we.opts.ObjectToWatch, cache.BlockUntilSynced(false))
 	if err != nil {
@@ -430,7 +447,7 @@ func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) 
 	handler, err := informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			t := obj.(client.Object)
-			we.logger.Info("new endpoint object", "object", t)
+			we.logger.V(4).Info("new endpoint object", "object", logObject(t))
 			if filter := we.opts.AddFilter; filter != nil {
 				accept, err := filter(t)
 				if err != nil {
@@ -448,7 +465,7 @@ func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) 
 		},
 		UpdateFunc: func(oldObj any, newObj any) {
 			t := newObj.(client.Object)
-			we.logger.Info("updated endpoint object", "object", t)
+			we.logger.V(4).Info("updated endpoint object", "object", logObject(t))
 			if filter := we.opts.UpdateFilter; filter != nil {
 				accept, err := filter(t)
 				if err != nil {
@@ -469,16 +486,16 @@ func (we *watchedEndpoint) start(ctx context.Context, aware multicluster.Aware) 
 			if !ok {
 				tombstone, ok := obj.(toolscache.DeletedFinalStateUnknown)
 				if !ok {
-					we.logger.Error(nil, "couldn't get object from tombstone", "obj", obj)
+					we.logger.Error(nil, "couldn't get object from tombstone", "obj", logObject(t))
 					return
 				}
 				t, ok = tombstone.Obj.(client.Object)
 				if !ok {
-					we.logger.Error(nil, "tombstone contained object that is not expected", "obj", obj)
+					we.logger.Error(nil, "tombstone contained object that is not expected", "obj", logObject(t))
 					return
 				}
 			}
-			we.logger.Info("deleted endpoint object", "object", obj)
+			we.logger.V(4).Info("deleted endpoint object", "object", logObject(t))
 			clusterName := logicalcluster.From(t)
 
 			shInf, _, _, err := we.wildcardCache.GetSharedInformer(we.opts.ObjectToWatch)
