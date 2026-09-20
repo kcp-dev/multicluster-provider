@@ -36,6 +36,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
+	ctrlrecorder "sigs.k8s.io/controller-runtime/pkg/recorder"
 )
 
 // EventBroadcasterProducer makes an event broadcaster, returning
@@ -172,7 +173,7 @@ func (p *Provider) GetEventRecorderFor(name string) record.EventRecorder {
 
 // GetEventRecorder returns an event recorder that broadcasts to this provider's
 // broadcaster.  All events will be associated with a component of the given name.
-func (p *Provider) GetEventRecorder(name string) events.EventRecorder {
+func (p *Provider) GetEventRecorder(name string) ctrlrecorder.EventRecorder {
 	return &lazyRecorder{
 		prov: p,
 		name: name,
@@ -185,15 +186,20 @@ type lazyRecorder struct {
 	prov *Provider
 	name string
 
-	recOnce sync.Once
-	rec     events.EventRecorder
+	recOnce      sync.Once
+	rec          events.EventRecorder
+	annotatedRec events.AnnotatedEventRecorder
 }
+
+var _ ctrlrecorder.EventRecorder = &lazyRecorder{}
 
 // ensureRecording ensures that a concrete recorder is populated for this recorder.
 func (l *lazyRecorder) ensureRecording() {
 	l.recOnce.Do(func() {
 		_, broadcaster := l.prov.getBroadcaster()
-		l.rec = broadcaster.NewRecorder(l.prov.scheme, l.name)
+		rec := broadcaster.NewRecorder(l.prov.scheme, l.name)
+		l.rec = rec
+		l.annotatedRec = rec.(events.AnnotatedEventRecorder)
 	})
 }
 
@@ -203,6 +209,16 @@ func (l *lazyRecorder) Eventf(regarding runtime.Object, related runtime.Object, 
 	l.prov.lock.RLock()
 	if !l.prov.stopped {
 		l.rec.Eventf(regarding, related, eventtype, reason, action, note, args...)
+	}
+	l.prov.lock.RUnlock()
+}
+
+func (l *lazyRecorder) AnnotatedEventf(regarding runtime.Object, related runtime.Object, annotations map[string]string, eventtype, reason, action, note string, args ...any) {
+	l.ensureRecording()
+
+	l.prov.lock.RLock()
+	if !l.prov.stopped {
+		l.annotatedRec.AnnotatedEventf(regarding, related, annotations, eventtype, reason, action, note, args...)
 	}
 	l.prov.lock.RUnlock()
 }

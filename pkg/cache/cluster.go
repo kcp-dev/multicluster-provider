@@ -25,12 +25,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
+	ctrlrecorder "sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	"github.com/kcp-dev/logicalcluster/v3"
 
@@ -179,7 +179,7 @@ func (c *ScopedCluster) GetEventRecorderFor(name string) record.EventRecorder {
 }
 
 // GetEventRecorder returns a EventRecorder for the given name.
-func (c *ScopedCluster) GetEventRecorder(name string) events.EventRecorder {
+func (c *ScopedCluster) GetEventRecorder(name string) ctrlrecorder.EventRecorder {
 	return c.eventRecorderGetter.GetEventRecorder(name)
 }
 
