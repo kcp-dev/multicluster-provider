@@ -200,10 +200,10 @@ func TestEndpointSliceUpdate_IdempotentAdd(t *testing.T) {
 	obj := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "test"}}
 
 	vwURLs = []string{"https://kcp.example.com/endpoint-1"}
-	p.endpointSliceUpdate(t.Context(), aware, obj)
+	require.NoError(t, p.endpointSliceUpdate(t.Context(), aware, obj))
 	assert.Equal(t, 1, callCount)
 
 	// Same URL again — should not call watchEndpointFunc a second time.
-	p.endpointSliceUpdate(t.Context(), aware, obj)
+	require.NoError(t, p.endpointSliceUpdate(t.Context(), aware, obj))
 	assert.Equal(t, 1, callCount)
 }

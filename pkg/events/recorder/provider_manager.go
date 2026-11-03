@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
+	ctrlrecorder "sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	"github.com/kcp-dev/logicalcluster/v3"
 )
@@ -36,7 +37,7 @@ import (
 // EventRecorderGetter is an interface for the Provider.
 type EventRecorderGetter interface {
 	GetEventRecorderFor(string) record.EventRecorder
-	GetEventRecorder(string) events.EventRecorder
+	GetEventRecorder(string) ctrlrecorder.EventRecorder
 }
 
 // Manager manages Providers.
@@ -113,7 +114,7 @@ func (m *Manager) GetEventRecorderFor(cfg *rest.Config, name, clusterName logica
 
 // GetEventRecorder returns an event recorder that broadcasts to this provider's
 // broadcaster.  All events will be associated with a component of the given name.
-func (m *Manager) GetEventRecorder(cfg *rest.Config, name, clusterName logicalcluster.Name) events.EventRecorder {
+func (m *Manager) GetEventRecorder(cfg *rest.Config, name, clusterName logicalcluster.Name) ctrlrecorder.EventRecorder {
 	provider, err := m.GetProvider(cfg, clusterName)
 	if err != nil {
 		m.logger.Error(err, "error getting event recorder", "clusterName", clusterName)

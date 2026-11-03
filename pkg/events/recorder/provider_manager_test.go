@@ -52,7 +52,9 @@ func TestManager(t *testing.T) {
 
 	recorder := m.GetEventRecorder(cfg, "test", clusterName)
 	require.NotNil(t, recorder)
-	recorder.Eventf(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "configmap", Namespace: "default"}}, nil, corev1.EventTypeNormal, "reason", "message", "note")
+	configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "configmap", Namespace: "default"}}
+	recorder.Eventf(configMap, nil, corev1.EventTypeNormal, "reason", "message", "note")
+	recorder.AnnotatedEventf(configMap, nil, map[string]string{"key": "value"}, corev1.EventTypeNormal, "reason", "action", "note")
 
 	require.Len(t, m.providers, 1)
 
