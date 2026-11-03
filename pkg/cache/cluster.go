@@ -81,7 +81,7 @@ func NewScopedCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcar
 
 // NewScopedInitializingCluster constructs a new cluster.Cluster that operates on a specific logical cluster
 // for initializing workspaces. It doesn't construct client to read from wildcard cache.
-func NewScopedInitializingCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme) (*ScopedCluster, error) {
+func NewScopedInitializingCluster(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA WildcardCache, scheme *runtime.Scheme, eventRecorderGetter mcrecorder.EventRecorderGetter) (*ScopedCluster, error) {
 	cfg = rest.CopyConfig(cfg)
 	host, err := url.JoinPath(cfg.Host, clusterName.Path().RequestPath())
 	if err != nil {
@@ -111,13 +111,14 @@ func NewScopedInitializingCluster(cfg *rest.Config, clusterName logicalcluster.N
 	}
 
 	return &ScopedCluster{
-		clusterName: clusterName,
-		config:      cfg,
-		scheme:      scheme,
-		client:      cli,
-		httpClient:  httpClient,
-		mapper:      mapper,
-		cache:       ca,
+		clusterName:         clusterName,
+		config:              cfg,
+		scheme:              scheme,
+		client:              cli,
+		httpClient:          httpClient,
+		mapper:              mapper,
+		cache:               ca,
+		eventRecorderGetter: eventRecorderGetter,
 	}, nil
 }
 

@@ -101,8 +101,8 @@ func New(cfg *rest.Config, workspaceTypeName string, options Options) (*Provider
 		ObjectToWatch: options.ObjectToWatch,
 		Log:           options.Log,
 		Handlers:      options.Handlers,
-		NewCluster: func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, _ recorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error) {
-			return mcpcache.NewScopedInitializingCluster(cfg, clusterName, wildcardCA, scheme)
+		NewCluster: func(cfg *rest.Config, clusterName logicalcluster.Name, wildcardCA mcpcache.WildcardCache, scheme *runtime.Scheme, recorderProvider recorder.EventRecorderGetter) (*mcpcache.ScopedCluster, error) {
+			return mcpcache.NewScopedInitializingCluster(cfg, clusterName, wildcardCA, scheme, recorderProvider)
 		},
 	})
 	if err != nil {
